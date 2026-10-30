@@ -1,0 +1,3 @@
+data/*.tif
+data/meta.json
+__pycache__/

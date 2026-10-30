@@ -1,0 +1,109 @@
+:root {
+  --bg: #f6f5f1;
+  --panel: #ffffff;
+  --ink: #1f2420;
+  --ink-2: #4c544e;
+  --muted: #7a817b;
+  --line: #e2e0d8;
+  --accent: #2f6b3f;
+  --accent-ink: #ffffff;
+  --warn-bg: #fff4d6;
+  --warn-ink: #6b4e00;
+  --badge-bg: #f3e3b8;
+  --badge-ink: #6b4e00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151816;
+    --panel: #1d211e;
+    --ink: #e9ece9;
+    --ink-2: #c1c7c2;
+    --muted: #8d958f;
+    --line: #313732;
+    --accent: #7fbf8e;
+    --accent-ink: #10150f;
+    --warn-bg: #3a3014;
+    --warn-ink: #f3d98a;
+    --badge-bg: #3a3014;
+    --badge-ink: #f3d98a;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.topbar h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+.badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--badge-bg); color: var(--badge-ink); font-weight: 600;
+}
+.topbar .link-btn { margin-left: auto; }
+
+.layout { flex: 1; display: flex; min-height: 0; }
+.panel {
+  width: 360px; flex: none; overflow-y: auto; background: var(--panel);
+  border-right: 1px solid var(--line); padding: 4px 16px 16px;
+}
+.panel section { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.panel section:last-child { border-bottom: 0; }
+.panel h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
+#map { flex: 1; min-height: 300px; }
+
+button {
+  font: inherit; font-size: 14px; cursor: pointer; border-radius: 8px;
+  padding: 7px 12px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+}
+button:hover { filter: brightness(1.08); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.link-btn { background: none; border: 0; color: var(--accent); padding: 4px 0; text-decoration: underline; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+
+.upload { display: block; font-size: 14px; color: var(--ink-2); }
+.upload input { display: block; margin-bottom: 2px; max-width: 100%; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.total { font-size: 22px; font-weight: 650; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.warning { background: var(--warn-bg); color: var(--warn-ink); padding: 8px 10px; border-radius: 8px; font-size: 13.5px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12.5px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+td { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:not(:first-child) { text-align: right; }
+.bar { display: inline-block; width: 46px; height: 6px; background: var(--line); border-radius: 3px; margin-right: 6px; vertical-align: middle; overflow: hidden; }
+.bar > span { display: block; height: 100%; border-radius: 3px; }
+
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+.swatch.outline { border: 1.5px dashed var(--ink-2); background: none; }
+.legend { list-style: none; margin: 10px 0; padding: 0; }
+.legend li { padding: 3px 0; }
+
+.facts { margin: 12px 0; display: grid; gap: 6px; }
+.facts div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.facts dt { color: var(--ink-2); }
+.facts dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+
+.slider { display: block; font-size: 14px; color: var(--ink-2); }
+.slider input { width: 100%; }
+
+dialog { max-width: 560px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); padding: 20px 24px; }
+dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+dialog h2 { margin-top: 0; }
+
+@media (max-width: 760px) {
+  .layout { flex-direction: column-reverse; }
+  .panel { width: auto; border-right: 0; border-top: 1px solid var(--line); max-height: 52vh; }
+  #map { min-height: 48vh; }
+}
