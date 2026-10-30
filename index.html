@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Haiti Land Cover Explorer</title>
-  <meta name="description" content="Draw or upload an area anywhere in Haiti and get its 2025 land-cover breakdown from a Sentinel-2 random-forest model.">
+  <title>Central Plateau Land Cover</title>
+  <meta name="description" content="Draw or upload an area in Haiti's Central Plateau and get its 2025 land-cover breakdown from a Sentinel-2 random-forest model.">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
-    <h1>Haiti Land Cover Explorer</h1>
+    <h1>Central Plateau Land Cover <span class="sub">Haiti</span></h1>
     <span class="badge" title="Accuracy has not yet been measured against independent reference points">Preliminary · 2025</span>
     <button id="about-btn" class="link-btn" type="button">About the map</button>
   </header>
@@ -44,7 +44,7 @@
           <dl class="facts">
             <div><dt>Potential farmland</dt><dd id="potential"></dd></div>
             <div><dt>Mean model confidence</dt><dd id="confidence"></dd></div>
-            <div><dt>No data (cloud / outside Haiti)</dt><dd id="nodata"></dd></div>
+            <div><dt>No data (cloud / outside the map)</dt><dd id="nodata"></dd></div>
             <div><dt>Resolution used</dt><dd id="resolution"></dd></div>
           </dl>
           <div class="btn-row">
@@ -60,7 +60,7 @@
           <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.7">
         </label>
         <ul id="legend" class="legend"></ul>
-        <p class="muted small"><span class="swatch outline"></span>Training area (where the model learned)</p>
+        <p class="muted small"><span class="swatch outline"></span>Mapped area (about 2,200 km²)</p>
       </section>
     </aside>
 
@@ -69,9 +69,9 @@
 
   <dialog id="about">
     <h2>About this map</h2>
-    <p>Each 20 m pixel is classed as Farmland, Forest, Water or Bare for the 2025 growing season. A random-forest model reads Sentinel-2 imagery from three periods: before planting (Feb–Mar), mid-season (May–Jun) and after harvest (Aug–Sep).</p>
-    <p><strong>Where to trust it.</strong> The model learned from labelled fields in one part of the Central Plateau (dashed outline). Farther away it meets landscapes it has never seen: towns, mangroves, humid forest in the north, dry scrub in the northwest. Read results there as rough. Accuracy against independent ground-truth points has not been published yet.</p>
-    <p><strong>Seasons vary.</strong> The three image periods follow the Central Plateau calendar: first season about March–June, a dry July, second season about August–November. The north gets earlier winter rain and grows longer-maturing crops, and rainfall shifts from year to year. Fields planted off this calendar can be misread, often as Bare.</p>
+    <p>Covers about 2,200 km² of the Central Plateau around Lake Péligre, Mirebalais and Hinche. Each 20 m pixel is classed as Farmland, Forest, Water or Bare for the 2025 growing season. A random-forest model reads Sentinel-2 imagery from three periods: before planting (Feb–Mar), mid-season (May–Jun) and after harvest (Aug–Sep).</p>
+    <p><strong>How far to trust it.</strong> The model learned from labelled fields inside this same area. In cross-validation it gets about 3 in 4 pixels right, so read small areas with care. <em>Confidence</em> is the model's own probability for the class shown. An independent accuracy check against ground-truth points is in progress.</p>
+    <p><strong>Seasons vary.</strong> The image periods follow the Central Plateau calendar: first season about March–June, a dry July, second season about August–November. Fields planted off this calendar, or left unplanted in a dry year, can be misread as Bare.</p>
     <p><strong>Classes.</strong> “Bare” means not farmed and not tree-covered. It includes grassland, shrubland, rock, roads and buildings, because the model has no separate built-up class. “Potential farmland” is Farmland + Bare, the land that could be farmed.</p>
     <p><strong>Your data.</strong> Areas you draw or upload stay in your browser and are never uploaded. No farmer or plot data is in this site.</p>
     <p class="muted small" id="about-meta"></p>

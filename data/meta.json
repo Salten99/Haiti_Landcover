@@ -1,0 +1,49 @@
+{
+  "version": "2025.1-central-plateau-preliminary",
+  "file": "landcover_2025_20m.tif",
+  "nodata": 255,
+  "bounds": [
+    -72.15091021751799,
+    18.729069697924533,
+    -71.73131021751799,
+    19.173269697924532
+  ],
+  "res": 0.0002,
+  "training_bbox": [
+    -72.15091,
+    18.72907,
+    -71.73121,
+    19.17327
+  ],
+  "classes": [
+    {
+      "code": 0,
+      "name": "Farmland",
+      "color": "#d9a21f",
+      "potential": true,
+      "blurb": "annual crops or fields in rotation"
+    },
+    {
+      "code": 1,
+      "name": "Forest",
+      "color": "#2f6b3f",
+      "potential": false,
+      "blurb": "trees, woodland, tree crops"
+    },
+    {
+      "code": 2,
+      "name": "Water",
+      "color": "#2a8fbd",
+      "potential": false,
+      "blurb": "lakes, rivers"
+    },
+    {
+      "code": 3,
+      "name": "Bare",
+      "color": "#c9b28a",
+      "potential": true,
+      "blurb": "grass, shrub, rock, roads, buildings"
+    }
+  ],
+  "sources": "Sentinel-2 L2A 2025 seasonal composites (Google Earth Engine); random forest trained on Acceso field plots and digitised forest/bare/water polygons in the Central Plateau."
+}

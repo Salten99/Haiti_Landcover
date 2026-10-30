@@ -44,6 +44,7 @@ body {
   padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
 }
 .topbar h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+.topbar h1 .sub { font-weight: 400; color: var(--muted); margin-left: 4px; }
 .badge {
   font-size: 12px; padding: 2px 8px; border-radius: 999px;
   background: var(--badge-bg); color: var(--badge-ink); font-weight: 600;

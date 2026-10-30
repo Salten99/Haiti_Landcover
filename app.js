@@ -1,4 +1,4 @@
-// Haiti Land Cover Explorer: everything runs in the browser. The map is one Cloud-Optimized
+// Central Plateau Land Cover explorer: everything runs in the browser. The map is one Cloud-Optimized
 // GeoTIFF (band 1 class, band 2 confidence 0-100, 255 = no data) read by HTTP range requests.
 
 const DATA = "data/";
@@ -121,7 +121,7 @@ async function analyse(feature) {
   let [x0, y0, x1, y1] = bboxOf(polys);
   const b = state.meta.bounds;
   [x0, y0, x1, y1] = [Math.max(x0, b[0]), Math.max(y0, b[1]), Math.min(x1, b[2]), Math.min(y1, b[3])];
-  if (x0 >= x1 || y0 >= y1) return showError("That area is outside the mapped extent (Haiti).");
+  if (x0 >= x1 || y0 >= y1) return showError("That area is outside the mapped part of the Central Plateau.");
 
   const res = state.meta.res; // degrees per pixel at full resolution
   let w = Math.max(1, Math.round((x1 - x0) / res));
@@ -203,7 +203,7 @@ const fmt = (v, d = 0) => v.toLocaleString(undefined, { maximumFractionDigits: d
 function render(s) {
   $("results-empty").hidden = s.mapped > 0;
   $("results-body").hidden = !(s.mapped > 0);
-  if (!(s.mapped > 0)) return showError("No mapped land in that area (sea, cloud, or outside Haiti).");
+  if (!(s.mapped > 0)) return showError("No mapped land in that area (cloud, or outside the map).");
 
   $("total-ha").textContent = fmt(s.mapped);
   const tbody = $("class-table").querySelector("tbody");
