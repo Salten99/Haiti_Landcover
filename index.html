@@ -2,31 +2,53 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Central Plateau Land Cover</title>
   <meta name="description" content="Draw or upload an area in Haiti's Central Plateau and get its 2025 land-cover breakdown from a Sentinel-2 random-forest model.">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f2f3ef">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://server.arcgisonline.com" crossorigin>
+  <link rel="preconnect" href="https://s3.amazonaws.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <a class="skip" href="#map-wrap">Skip to the map</a>
+
   <header class="topbar">
-    <h1>Central Plateau Land Cover <span class="sub">Haiti</span></h1>
-    <span class="badge" title="Accuracy has not yet been measured against independent reference points">Work in progress · 2025</span>
+    <h1>Central Plateau land cover</h1>
+    <span class="badge">Work in progress</span>
     <button id="about-btn" class="link-btn" type="button">About the map</button>
   </header>
-  <div id="banner" class="banner" role="status">
-    <p><strong>Work in progress, not yet validated.</strong> This map is an early version. Its accuracy has not yet been checked against independent ground-truth points (about 3 in 4 pixels right in cross-validation). Read areas as estimates, and check low-confidence spots on the imagery.</p>
-    <button id="banner-close" type="button" class="icon-btn" aria-label="Dismiss notice">×</button>
+  <div id="banner" class="banner">
+    <p><strong>Not yet independently validated.</strong> About 3 in 4 pixels were right in testing, so treat areas as estimates.</p>
+    <button id="banner-close" type="button" class="icon-btn" aria-label="Dismiss notice">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
   </div>
 
   <main class="layout">
     <aside class="panel" aria-label="Analysis">
-      <section>
+      <section class="step">
         <h2>1. Pick an area</h2>
+        <div class="btn-row">
+          <button id="draw-rect" class="btn primary" type="button" aria-pressed="false">Draw a rectangle</button>
+          <button id="draw-poly" class="btn" type="button" aria-pressed="false">Draw a polygon</button>
+        </div>
+        <label class="file">
+          <input id="upload" type="file" accept=".geojson,.json,.kml">
+          <span class="btn quiet">Upload GeoJSON or KML</span>
+        </label>
         <label class="field">Go to
-          <select id="jump">
+          <select id="jump" name="jump" autocomplete="off">
             <option value="">Whole mapped area</option>
             <option value="18.835,-72.105">Mirebalais</option>
             <option value="18.830,-71.935">Lascahobas</option>
@@ -35,82 +57,85 @@
             <option value="19.145,-72.007">Hinche</option>
           </select>
         </label>
-        <p class="muted small">Tip: click or tap the map to see what is mapped at that spot. Drawing switches to the flat 2D view.</p>
-        <div class="btn-row">
-          <button id="draw-rect" type="button">Draw rectangle</button>
-          <button id="draw-poly" type="button">Draw polygon</button>
-        </div>
-        <label class="upload">
-          <input id="upload" type="file" accept=".geojson,.json,.kml">
-          <span>or upload GeoJSON / KML</span>
-        </label>
-        <button id="clear" type="button" class="link-btn" hidden>Clear area</button>
+        <p class="hint">Click or tap the map to see what is mapped at a spot. Keyboard: focus the map and press Enter.</p>
       </section>
 
-      <section id="results" aria-live="polite">
+      <section id="results" class="step">
         <h2>2. Land cover in your area</h2>
-        <p class="muted" id="results-empty">Draw or upload an area to see its breakdown.</p>
+        <p id="status" class="status" role="status" aria-live="polite">Draw or upload an area to see its breakdown.</p>
         <div id="results-body" hidden>
-          <p class="total"><span id="total-ha"></span> ha analysed</p>
-          <p id="warning" class="warning" hidden></p>
+          <p class="headline"><span class="headline-label">Potential farmland</span>
+            <span class="headline-value" id="potential"></span>
+            <span class="headline-sub" id="potential-sub"></span></p>
           <table id="class-table">
+            <caption class="sr-only">Hectares and share by land-cover class</caption>
             <thead><tr><th scope="col">Class</th><th scope="col">Hectares</th><th scope="col">Share</th></tr></thead>
             <tbody></tbody>
           </table>
-          <dl class="facts">
-            <div><dt>Potential farmland</dt><dd id="potential"></dd></div>
-            <div><dt>Mean model confidence</dt><dd id="confidence"></dd></div>
-            <div><dt>Area with low confidence (&lt;50%)</dt><dd id="low-conf"></dd></div>
-            <div><dt>No data (cloud / outside the map)</dt><dd id="nodata"></dd></div>
-            <div><dt>Resolution used</dt><dd id="resolution"></dd></div>
-          </dl>
-          <p class="muted small">Not yet validated: treat hectares as estimates.</p>
+          <div class="sure">
+            <h3>How sure is the model?</h3>
+            <dl class="facts">
+              <div><dt>Mean confidence</dt><dd id="confidence"></dd></div>
+              <div><dt>Area under 50% confidence</dt><dd id="low-conf"></dd></div>
+              <div id="nodata-row"><dt>No data (cloud)</dt><dd id="nodata"></dd></div>
+            </dl>
+            <p id="warning" class="warning" hidden></p>
+            <button id="show-where" class="btn quiet" type="button">Show where it is unsure</button>
+          </div>
           <div class="btn-row">
-            <button id="dl-csv" type="button">Download CSV</button>
-            <button id="dl-geojson" type="button">Download GeoJSON</button>
+            <button id="dl-csv" class="btn" type="button">Download CSV</button>
+            <button id="dl-geojson" class="btn" type="button">Download GeoJSON</button>
+            <button id="clear" class="link-btn" type="button">Clear area</button>
           </div>
         </div>
       </section>
 
-      <section>
-        <h2>Map layers</h2>
+      <section class="step">
+        <h2>Map</h2>
         <fieldset class="view">
-          <legend class="sr-only">Map view</legend>
+          <legend class="sr-only">What the map shows</legend>
           <label><input type="radio" name="view" value="class" checked> Land cover</label>
           <label><input type="radio" name="view" value="conf"> Model confidence</label>
         </fieldset>
-        <label class="slider">Layer opacity
-          <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.7">
+        <label class="slider">Layer opacity <output id="opacity-out" for="opacity">70%</output>
+          <input id="opacity" name="opacity" type="range" min="0" max="1" step="0.05" value="0.7">
         </label>
         <ul id="legend" class="legend"></ul>
         <div id="conf-legend" class="conf-legend" hidden>
           <span class="ramp"></span>
-          <span class="ramp-labels"><span>unsure (0%)</span><span>sure (100%)</span></span>
+          <span class="ramp-labels"><span>Unsure</span><span>Sure</span></span>
         </div>
-        <p class="muted small"><span class="swatch outline"></span>Mapped area (about 2,200 km²)</p>
+        <p class="hint"><span class="swatch outline" aria-hidden="true"></span>Dashed line: the mapped area, about 2,200&nbsp;km²</p>
       </section>
     </aside>
 
-    <div class="map-wrap">
-      <div id="map3d" role="region" aria-label="3D map"></div>
-      <div id="map" role="region" aria-label="2D map" hidden></div>
+    <div class="map-wrap" id="map-wrap" tabindex="-1">
+      <div id="map3d" class="map" aria-label="3D map. Press Enter to inspect the centre."></div>
+      <div id="map" class="map is-off" aria-label="2D map. Press Enter to inspect the centre."></div>
       <div id="mode-switch" class="mode-switch" role="group" aria-label="Map view">
         <button type="button" data-mode="3d" aria-pressed="true">3D terrain</button>
         <button type="button" data-mode="2d" aria-pressed="false">2D</button>
       </div>
-      <p class="map-hint" id="map-hint">Drag to pan · right-drag or Ctrl+drag to rotate and tilt · scroll to zoom</p>
+      <div id="draw-bar" class="draw-bar" role="status" hidden>
+        <span id="draw-msg"></span>
+        <button id="draw-cancel" type="button" class="btn quiet small">Cancel (Esc)</button>
+      </div>
+      <div id="map-status" class="map-status" role="status">
+        <span class="spinner" aria-hidden="true"></span><span id="map-status-msg">Loading land cover…</span>
+      </div>
+      <p class="map-hint" id="map-hint"><span>Drag to move</span><span>Right-drag to tilt and turn</span><span>Scroll to zoom</span></p>
     </div>
   </main>
 
-  <dialog id="about">
-    <h2>About this map</h2>
-    <p>Covers about 2,200 km² of the Central Plateau around Lake Péligre, Mirebalais and Hinche. Each 20 m pixel is classed as Farmland, Forest, Water or Open land for the 2025 growing season. A random-forest model reads Sentinel-2 imagery from three periods: before planting (Feb–Mar), mid-season (May–Jun) and after harvest (Aug–Sep).</p>
-    <p><strong>How far to trust it.</strong> The model learned from labelled fields inside this same area. In cross-validation it gets about 3 in 4 pixels right, so read small areas with care. <em>Confidence</em> is the model's own probability for the class shown. An independent accuracy check against ground-truth points is in progress.</p>
+  <dialog id="about" aria-labelledby="about-title">
+    <h2 id="about-title">About this map</h2>
+    <p>Covers about 2,200&nbsp;km² of the Central Plateau around Lake Péligre, Mirebalais and Hinche. Each 20&nbsp;m pixel is classed as Farmland, Forest, Water or Open land for the 2025 growing season. A random-forest model reads Sentinel-2 imagery from three periods: before planting (Feb–Mar), mid-season (May–Jun) and after harvest (Aug–Sep).</p>
+    <p><strong>How far to trust it.</strong> The model learned from labelled fields inside this same area. In cross-validation it gets about 3 in 4 pixels right, so read small areas with care. <em>Confidence</em> is the model's own probability for the class shown; faded colours on the map mark pixels under 50%. An independent accuracy check against ground-truth points is in progress.</p>
     <p><strong>Seasons vary.</strong> The image periods follow the Central Plateau calendar: first season about March–June, a dry July, second season about August–November. Fields planted off this calendar, or left unplanted in a dry year, can be misread as Open land.</p>
-    <p><strong>Classes.</strong> “Open land” (the model's <em>Bare</em> class) means not farmed and not tree-covered. It includes grassland, shrubland, bare soil, rock, roads and buildings, because the model has no separate built-up class. “Potential farmland” is Farmland + Open land, the land that could be farmed.</p>
+    <p><strong>Classes.</strong> “Open land” (the model's <em>Bare</em> class) means not farmed and not tree-covered: grassland, shrubland, bare soil, rock, roads and buildings. “Potential farmland” is Farmland plus Open land, the land that could be farmed.</p>
     <p><strong>Your data.</strong> Areas you draw or upload stay in your browser and are never uploaded. No farmer or plot data is in this site.</p>
-    <p class="muted small" id="about-meta"></p>
-    <button id="about-close" type="button">Close</button>
+    <p class="hint" id="about-meta"></p>
+    <button id="about-close" class="btn primary" type="button">Close</button>
   </dialog>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>

@@ -10,6 +10,10 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 class RangeHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")  # local preview: always serve the edited files
+        super().end_headers()
+
     def send_head(self):
         m = re.fullmatch(r"bytes=(\d+)-(\d*)", self.headers.get("Range", ""))
         path = self.translate_path(self.path)

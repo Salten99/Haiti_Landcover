@@ -1,41 +1,55 @@
 // Central Plateau Land Cover explorer: everything runs in the browser. The map is one Cloud-Optimized
 // GeoTIFF (band 1 class, band 2 confidence 0-100, 255 = no data) read by HTTP range requests.
 // Two views of the same data: 3D terrain (MapLibre, default) and flat 2D (Leaflet, where drawing happens).
+// The URL hash keeps view, layer, position and a drawn area, so a link reopens exactly what was on screen.
 
 const DATA = "data/";
 const MAX_PIXELS = 4e6; // larger areas are read from a coarser overview to stay responsive
 const NODATA = 255;
+const LOW_CONF = 50;
+const OPEN_LAND = 3;
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 const ESRI_ATTR = "Imagery © Esri, Maxar, Earthstar Geographics";
 const DEM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
-const AOI_COLOR = "#ffd166";
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const PHONE = matchMedia("(max-width: 760px)");
 
-const state = { meta: null, tiff: null, aoi: null, stats: null, view: "class", drawing: false, mode: "3d" };
-const LOW_CONF = 50;
+const state = { meta: null, tiff: null, aoi: null, stats: null, view: "class", mode: "3d", drawing: null, firstTile: false };
+const $ = (id) => document.getElementById(id);
 
-// viridis-like ramp for the confidence view (perceptually even, colour-blind safe): 0% -> yellow, 100% -> purple
-const RAMP = [[253, 231, 37], [33, 145, 140], [68, 1, 84]];
+// single-hue ramp for the confidence view (light = unsure, deep = sure); it never starts at farmland gold
+const RAMP = [[242, 232, 250], [155, 111, 192], [59, 10, 94]];
 const CONF_RGB = Array.from({ length: 101 }, (_, v) => {
   const t = (v / 100) * 2, i = Math.min(1, Math.floor(t)), f = t - i;
   return [...RAMP[i].map((a, k) => Math.round(a + (RAMP[i + 1][k] - a) * f)), 255];
 });
-const $ = (id) => document.getElementById(id);
+const HATCH = [156, 146, 133, 255]; // Open land stripes: a second cue besides colour
 
-// one map tile of the current view (land cover or confidence) for a lon/lat bbox, drawn into `canvas`
-async function renderTile(canvas, [west, south, east, north]) {
+// ---------------------------------------------------------------- tiles
+// one map tile of the current view for a lon/lat bbox, drawn into `canvas`
+async function renderTile(canvas, [west, south, east, north], from) {
   const b = state.meta.bounds;
   if (east < b[0] || west > b[2] || north < b[1] || south > b[3]) return canvas;
+  const w = canvas.width, h = canvas.height;
   // shortcut: linear latitude within a Web-Mercator tile; error is sub-pixel at Haiti's latitude
-  const [px] = await state.tiff.readRasters({ bbox: [west, south, east, north], width: canvas.width, height: canvas.height,
-                                              samples: [state.view === "conf" ? 1 : 0], fillValue: NODATA, resampleMethod: "nearest" });
+  const [cls, conf] = await state.tiff.readRasters({ bbox: [west, south, east, north], width: w, height: h,
+                                                     samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" });
   const ctx = canvas.getContext("2d");
-  const img = ctx.createImageData(canvas.width, canvas.height);
-  const lut = state.view === "conf" ? CONF_RGB : state.rgb;
-  for (let i = 0; i < px.length; i++) {
-    const c = lut[px[i]];
-    if (c) img.data.set(c, i * 4);
+  const img = ctx.createImageData(w, h);
+  let painted = 0;
+  for (let i = 0; i < cls.length; i++) {
+    if (cls[i] === NODATA) continue;
+    let c;
+    if (state.view === "conf") c = CONF_RGB[conf[i]];
+    else {
+      const x = i % w, y = (i / w) | 0;
+      c = cls[i] === OPEN_LAND && (x + y) % 8 < 2 ? HATCH : state.rgb[cls[i]];
+      if (c && conf[i] < LOW_CONF) c = [c[0], c[1], c[2], 110]; // faded = the model is unsure
+    }
+    if (c) { img.data.set(c, i * 4); painted++; }
   }
   ctx.putImageData(img, 0, 0);
+  if (painted && !state.firstTile && from === state.mode) firstTileShown(); // the hidden map doesn't count
   return canvas;
 }
 
@@ -43,6 +57,20 @@ function tileBbox(z, x, y) {
   const n = 2 ** z, lon = (v) => (v / n) * 360 - 180;
   const lat = (v) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * v) / n))) * 180) / Math.PI;
   return [lon(x), lat(y + 1), lon(x + 1), lat(y)];
+}
+
+function firstTileShown() {
+  state.firstTile = true;
+  $("map-status").classList.add("done");
+  // terrain loads only after the land cover is visible, so a slow connection sees the answer first
+  map3dReady.then(() => map3d.setTerrain({ source: "dem", exaggeration: 1.4 }));
+}
+
+function mapError(msg) {
+  const el = $("map-status");
+  el.classList.remove("done");
+  el.classList.add("error");
+  $("map-status-msg").textContent = msg;
 }
 
 // what is mapped at a spot, as popup HTML
@@ -54,16 +82,18 @@ async function inspect(lat, lng) {
                                                        samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" });
     const k = state.meta.classes.find((x) => x.code === c);
     html = k
-      ? `<strong>${k.name}</strong><br>Model confidence ${v}%${v < LOW_CONF ? " (low)" : ""}`
-      : "No data here (cloud in the 2025 images).";
+      ? `<strong>${k.name}</strong><br>Model confidence ${v}%${v < LOW_CONF ? " (unsure)" : ""}`
+      : "No data here: cloud in the 2025 images.";
   }
-  return `<div class="popup-class">${html}<br><span style="color:#777">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`;
+  return `<div class="popup-class">${html}<br><span class="coords">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`;
 }
 
 // ---------------------------------------------------------------- 2D map (Leaflet)
-const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([18.95, -72.6], 8);
+const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([18.95, -71.94], 10);
 L.tileLayer(ESRI, { maxZoom: 18, attribution: ESRI_ATTR }).addTo(map);
 const drawn = new L.FeatureGroup().addTo(map);
+const AOI_HALO = { color: "#16201a", weight: 6, opacity: 0.55, fill: false };
+const AOI_LINE = { color: "#ffffff", weight: 2.5, fillColor: "#ffffff", fillOpacity: 0.06 };
 
 const LandCoverLayer = L.GridLayer.extend({
   createTile(coords, done) {
@@ -73,7 +103,7 @@ const LandCoverLayer = L.GridLayer.extend({
     tile.height = size.y;
     const nw = map.unproject(coords.scaleBy(size), coords.z);
     const se = map.unproject(coords.add([1, 1]).scaleBy(size), coords.z);
-    renderTile(tile, [nw.lng, se.lat, se.lng, nw.lat]).then(() => done(null, tile), (e) => done(e, tile));
+    renderTile(tile, [nw.lng, se.lat, se.lng, nw.lat], "2d").then(() => done(null, tile), (e) => done(e, tile));
     return tile;
   },
 });
@@ -82,17 +112,25 @@ map.on("click", async (e) => {
   if (state.drawing || !state.tiff) return;
   L.popup().setLatLng(e.latlng).setContent(await inspect(e.latlng.lat, e.latlng.lng)).openOn(map);
 });
+map.on("moveend", writeHash);
 
 // ---------------------------------------------------------------- 3D map (MapLibre + terrain)
 maplibregl.addProtocol("lc", async (params) => {
   const [z, x, y] = params.url.split("/").slice(-3); // lc://<view>/{z}/{x}/{y}
   const canvas = await renderTile(Object.assign(document.createElement("canvas"), { width: 256, height: 256 }),
-                                  tileBbox(+z, +x, +y));
+                                  tileBbox(+z, +x, +y), "3d");
   const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
   return { data: await blob.arrayBuffer() };
 });
 
-const map3d = new maplibregl.Map({
+// No WebGL (old phones, locked-down browsers): fall back to 2D. The stub swallows every 3D call, so the
+// rest of the code doesn't need a guard at each use.
+const HAS_WEBGL = (() => {
+  try { const c = document.createElement("canvas"); return !!(c.getContext("webgl2") || c.getContext("webgl")); }
+  catch { return false; }
+})();
+const NO_3D = new Proxy(function () {}, { get: (_, k) => (k === "then" ? undefined : NO_3D), apply: () => NO_3D });
+const map3d = !HAS_WEBGL ? NO_3D : new maplibregl.Map({
   container: "map3d",
   style: {
     version: 8,
@@ -102,74 +140,117 @@ const map3d = new maplibregl.Map({
              attribution: "Terrain: Mapzen / AWS Terrain Tiles" },
     },
     layers: [{ id: "esri", type: "raster", source: "esri" }],
-    terrain: { source: "dem", exaggeration: 1.5 },
   },
-  center: [-71.94, 18.95], zoom: 10, pitch: 60, bearing: -20, maxPitch: 80,
+  center: [-71.94, 18.95], zoom: 9.6, pitch: 35, bearing: -15, maxPitch: 75,
 });
 map3d.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 map3d.on("click", async (e) => {
   if (!state.tiff) return;
   new maplibregl.Popup().setLngLat(e.lngLat).setHTML(await inspect(e.lngLat.lat, e.lngLat.lng)).addTo(map3d);
 });
+map3d.on("moveend", writeHash);
 // style.load, not load: "load" also waits for every visible imagery and terrain tile
-const map3dReady = new Promise((res) => (map3d.isStyleLoaded() ? res() : map3d.once("style.load", res)));
+const map3dReady = HAS_WEBGL ? new Promise((res) => (map3d.isStyleLoaded() ? res() : map3d.once("style.load", res)))
+  : new Promise(() => {});
 
-function lcTiles() {
-  return [`lc://${state.view}/{z}/{x}/{y}`];
-}
+const lcTiles = () => [`lc://${state.view}/{z}/{x}/{y}`];
 
 function syncAoi3d() {
   const src = map3d.getSource("aoi");
   if (src) src.setData(state.aoi || { type: "FeatureCollection", features: [] });
 }
 
-// ---------------------------------------------------------------- switching views
+// keyboard: Enter on a focused map inspects its centre
+$("map3d").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter" || !state.tiff) return;
+  const c = map3d.getCenter();
+  new maplibregl.Popup().setLngLat(c).setHTML(await inspect(c.lat, c.lng)).addTo(map3d);
+});
+$("map").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter" || !state.tiff || state.drawing) return;
+  const c = map.getCenter();
+  L.popup().setLatLng(c).setContent(await inspect(c.lat, c.lng)).openOn(map);
+});
+
+// ---------------------------------------------------------------- views
 function setMode(mode) {
   if (mode === state.mode) return;
-  if (mode === "2d") {
+  if (!HAS_WEBGL) {
+    // nothing to carry over from the 3D stub
+  } else if (mode === "2d") {
     const c = map3d.getCenter();
-    $("map3d").hidden = true;
-    $("map").hidden = false;
-    map.invalidateSize();
     map.setView([c.lat, c.lng], Math.round(map3d.getZoom() + 1), { animate: false }); // MapLibre zoom is one level coarser
   } else {
     const c = map.getCenter();
-    $("map").hidden = true;
-    $("map3d").hidden = false;
-    map3d.resize();
     map3d.jumpTo({ center: [c.lng, c.lat], zoom: map.getZoom() - 1 });
   }
+  $("map").classList.toggle("is-off", mode !== "2d");
+  $("map3d").classList.toggle("is-off", mode !== "3d");
+  $("map-wrap").dataset.mode = mode;
   state.mode = mode;
+  map.invalidateSize();
+  map3d.resize();
   document.querySelectorAll("#mode-switch button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+  writeHash();
 }
 document.querySelectorAll("#mode-switch button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
 
-function flyTo(lat, lng, zoom2d) {
-  if (state.mode === "3d") map3d.flyTo({ center: [lng, lat], zoom: zoom2d - 1, pitch: 60 });
-  else map.setView([lat, lng], zoom2d);
+function setView(view) {
+  state.view = view;
+  document.querySelector(`input[name="view"][value="${view}"]`).checked = true;
+  $("legend").hidden = view === "conf";
+  $("conf-legend").hidden = view !== "conf";
+  state.lc.redraw();
+  map3d.getSource("lc")?.setTiles(lcTiles()); // a new URL per view, so cached tiles of the other view aren't reused
+  writeHash();
 }
 
-function fitMapped() {
-  const b = state.meta.bounds;
-  if (state.mode === "3d") map3d.fitBounds([[b[0], b[1]], [b[2], b[3]]], { pitch: 60, bearing: -20, padding: 40, duration: 0 });
+function flyTo(lat, lng, zoom2d) {
+  if (state.mode === "3d") map3d[REDUCED_MOTION ? "jumpTo" : "flyTo"]({ center: [lng, lat], zoom: zoom2d - 1 });
+  else map.setView([lat, lng], zoom2d, { animate: !REDUCED_MOTION });
+}
+
+function fitBox([x0, y0, x1, y1], padding) {
+  if (state.mode === "3d") map3d.fitBounds([[x0, y0], [x1, y1]], { padding, duration: REDUCED_MOTION ? 0 : 600 });
   else {
-    map.invalidateSize(); // the banner can change the map's size after Leaflet first measured it
-    map.fitBounds([[b[1], b[0]], [b[3], b[2]]], { animate: false });
+    map.invalidateSize();
+    map.fitBounds([[y0, x0], [y1, x1]], { padding: [padding / 2, padding / 2], animate: false });
   }
 }
+const fitMapped = () => fitBox(state.meta.bounds, 40);
+
+// ---------------------------------------------------------------- drawing
+const DRAW_TOOLS = {
+  rect: { button: "draw-rect", Handler: () => L.Draw.Rectangle, msg: "Drag on the map to draw a rectangle" },
+  poly: { button: "draw-poly", Handler: () => L.Draw.Polygon, msg: "Tap each corner; tap the first point to finish" },
+};
+
+function startDraw(kind) {
+  stopDraw();
+  setMode("2d"); // drawing on tilted terrain misplaces vertices, so draw in the flat view
+  const tool = DRAW_TOOLS[kind];
+  const Handler = tool.Handler();
+  state.drawing = new Handler(map, { shapeOptions: AOI_LINE, allowIntersection: false });
+  state.drawing.enable();
+  $(tool.button).setAttribute("aria-pressed", "true");
+  $("draw-msg").textContent = tool.msg;
+  $("draw-bar").hidden = false;
+}
+
+function stopDraw() {
+  if (state.drawing) state.drawing.disable();
+  state.drawing = null;
+  Object.values(DRAW_TOOLS).forEach((t) => $(t.button).setAttribute("aria-pressed", "false"));
+  $("draw-bar").hidden = true;
+}
+
+$("draw-rect").onclick = () => startDraw("rect");
+$("draw-poly").onclick = () => startDraw("poly");
+$("draw-cancel").onclick = stopDraw;
+map.on(L.Draw.Event.CREATED, (e) => setAoi(e.layer.toGeoJSON()));
+map.on(L.Draw.Event.DRAWSTOP, () => setTimeout(stopDraw, 0)); // after the final click, so it isn't read as an inspect
 
 // ---------------------------------------------------------------- AOI input
-const drawOpts = { shapeOptions: { color: AOI_COLOR, weight: 2, fillOpacity: 0.05 } };
-function startDraw(Handler, opts) {
-  setMode("2d"); // drawing on tilted terrain misplaces vertices, so draw in the flat view
-  new Handler(map, opts).enable();
-}
-$("draw-rect").onclick = () => startDraw(L.Draw.Rectangle, drawOpts);
-$("draw-poly").onclick = () => startDraw(L.Draw.Polygon, { ...drawOpts, allowIntersection: false });
-map.on(L.Draw.Event.CREATED, (e) => setAoi(e.layer.toGeoJSON()));
-map.on(L.Draw.Event.DRAWSTART, () => (state.drawing = true));
-map.on(L.Draw.Event.DRAWSTOP, () => setTimeout(() => (state.drawing = false), 0)); // let the final click pass first
-
 $("jump").onchange = (e) => {
   if (!e.target.value) return fitMapped();
   const [lat, lng] = e.target.value.split(",").map(Number);
@@ -181,6 +262,7 @@ $("banner-close").onclick = () => {
   map3d.resize();
 };
 $("clear").onclick = () => setAoi(null);
+$("show-where").onclick = () => setView("conf");
 
 $("upload").onchange = async (e) => {
   const file = e.target.files[0];
@@ -191,11 +273,11 @@ $("upload").onchange = async (e) => {
       ? toGeoJSON.kml(new DOMParser().parseFromString(text, "text/xml"))
       : JSON.parse(text);
     const polys = polygonsOf(gj);
-    if (!polys.length) throw new Error("no polygon found");
+    if (!polys.length) throw new Error("it has no polygons");
     setAoi({ type: "Feature", properties: { source: file.name },
              geometry: { type: "MultiPolygon", coordinates: polys } });
   } catch (err) {
-    showError(`Could not read ${file.name}: ${err.message}. Use a GeoJSON or KML file with polygons in longitude/latitude.`);
+    setStatus(`Couldn't read ${file.name}: ${err.message}. Upload a GeoJSON or KML file with polygons in longitude/latitude.`, "error");
   }
   e.target.value = "";
 };
@@ -214,42 +296,35 @@ function polygonsOf(gj) {
   return out;
 }
 
-function setAoi(feature) {
+function setAoi(feature, { fit = true } = {}) {
   drawn.clearLayers();
   state.aoi = feature;
   state.stats = null;
-  $("clear").hidden = !feature;
   syncAoi3d();
-  if (!feature) {
-    $("results-body").hidden = true;
-    $("results-empty").hidden = false;
-    $("results-empty").textContent = "Draw or upload an area to see its breakdown.";
-    return;
-  }
-  const layer = L.geoJSON(feature, { style: drawOpts.shapeOptions }).addTo(drawn);
+  writeHash();
+  $("results-body").hidden = true;
+  if (!feature) return setStatus("Draw or upload an area to see its breakdown.");
+  L.geoJSON(feature, { style: AOI_HALO, interactive: false }).addTo(drawn);
+  const layer = L.geoJSON(feature, { style: AOI_LINE, interactive: false }).addTo(drawn);
   const lb = layer.getBounds();
-  if (state.mode === "3d") map3d.fitBounds([[lb.getWest(), lb.getSouth()], [lb.getEast(), lb.getNorth()]], { padding: 60, pitch: 55 });
-  else map.fitBounds(lb, { padding: [30, 30] });
-  analyse(feature).catch((err) => showError(`Analysis failed: ${err.message}`));
+  if (fit) fitBox([lb.getWest(), lb.getSouth(), lb.getEast(), lb.getNorth()], 60);
+  analyse(feature).catch((err) => setStatus(`The analysis failed (${err.message}). Try a smaller area, or reload the page.`, "error"));
 }
 
-function showError(msg) {
-  $("results-body").hidden = true;
-  $("results-empty").hidden = false;
-  $("results-empty").textContent = msg;
+function setStatus(msg, kind = "") {
+  $("status").textContent = msg;
+  $("status").className = `status ${kind}`;
+  $("status").hidden = false;
 }
 
 // ---------------------------------------------------------------- analysis
 async function analyse(feature) {
-  $("results-empty").hidden = false;
-  $("results-empty").textContent = "Reading the map for your area…";
-  $("results-body").hidden = true;
-
+  setStatus("Reading the map for your area…");
   const polys = polygonsOf(feature);
   let [x0, y0, x1, y1] = bboxOf(polys);
   const b = state.meta.bounds;
   [x0, y0, x1, y1] = [Math.max(x0, b[0]), Math.max(y0, b[1]), Math.min(x1, b[2]), Math.min(y1, b[3])];
-  if (x0 >= x1 || y0 >= y1) return showError("That area is outside the mapped part of the Central Plateau.");
+  if (x0 >= x1 || y0 >= y1) return setStatus("That area is outside the mapped part of the Central Plateau. Draw inside the dashed line.", "error");
 
   const res = state.meta.res; // degrees per pixel at full resolution
   let w = Math.max(1, Math.round((x1 - x0) / res));
@@ -324,33 +399,40 @@ function rasterizeMask(polys, [x0, y0, x1, y1], w, h) {
 
 // ---------------------------------------------------------------- output
 const fmt = (v, d = 0) => v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+// on screen, hectares are rounded to tens: the map is an estimate (exports keep full precision)
+const ha10 = (v) => (v >= 10 ? `≈ ${fmt(Math.round(v / 10) * 10)}` : fmt(v, 1));
 
 function render(s) {
-  $("results-empty").hidden = s.mapped > 0;
-  $("results-body").hidden = !(s.mapped > 0);
-  if (!(s.mapped > 0)) return showError("No mapped land in that area (cloud, or outside the map).");
+  if (!(s.mapped > 0)) return setStatus("No mapped land in that area: it's cloud or outside the map.", "error");
+  const pot = s.classes.filter((k) => k.potential).reduce((a, k) => a + k.ha, 0);
+  setStatus(`Done. ${ha10(s.mapped)} hectares analysed; potential farmland ${fmt((pot / s.mapped) * 100)}%.`);
+  $("status").className = "status sr-only"; // still announced; the headline below says it visually
+  $("results-body").hidden = false;
 
-  $("total-ha").textContent = fmt(s.mapped);
+  $("potential").textContent = `${ha10(pot)} ha`;
+  $("potential-sub").textContent = `${fmt((pot / s.mapped) * 100)}% of ${ha10(s.mapped)} ha analysed (Farmland + Open land)`;
   const tbody = $("class-table").querySelector("tbody");
   tbody.innerHTML = "";
   for (const k of s.classes) {
     const share = k.ha / s.mapped;
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><span class="swatch" style="background:${k.color}"></span>${k.name}</td>
-      <td class="num">${fmt(k.ha)}</td>
-      <td class="num"><span class="bar"><span style="width:${(share * 100).toFixed(1)}%;background:${k.color}"></span></span>${fmt(share * 100, 1)}%</td>`;
+    tr.innerHTML = `<td><span class="swatch${k.code === OPEN_LAND ? " hatch" : ""}" style="background-color:${k.color}" aria-hidden="true"></span>${k.name}</td>
+      <td class="num">${ha10(k.ha)}</td>
+      <td class="num"><span class="bar" aria-hidden="true"><span style="width:${(share * 100).toFixed(1)}%;background:${k.color}"></span></span>${fmt(share * 100)}%</td>`;
     tbody.appendChild(tr);
   }
-  const pot = s.classes.filter((k) => k.potential).reduce((a, k) => a + k.ha, 0);
-  $("potential").textContent = `${fmt(pot)} ha (${fmt((pot / s.mapped) * 100, 1)}%)`;
   $("confidence").textContent = s.meanConfidence == null ? "–" : `${fmt(s.meanConfidence)}%`;
   $("low-conf").textContent = s.lowShare == null ? "–" : `${fmt(s.lowShare * 100)}%`;
-  $("nodata").textContent = `${fmt(s.nodata)} ha`;
-  $("resolution").textContent = `${s.resolutionM} m pixels`;
-
+  $("nodata-row").hidden = !(s.nodata > 0.5);
+  $("nodata").textContent = `${ha10(s.nodata)} ha`;
   const warn = $("warning");
   warn.hidden = !(s.lowShare > 0.3);
-  warn.textContent = `The model is unsure about ${fmt(s.lowShare * 100)}% of this area. Switch the map to "Model confidence" to see where, and check those spots on the imagery.`;
+  warn.textContent = `The model is unsure about ${fmt(s.lowShare * 100)}% of this area. Check those spots on the imagery before relying on the totals.`;
+  if (PHONE.matches) { // scroll the panel only; scrollIntoView would also scroll the fixed page
+    const panel = document.querySelector(".panel");
+    const top = panel.scrollTop + $("results").getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    panel.scrollTo({ top, behavior: REDUCED_MOTION ? "auto" : "smooth" });
+  }
 }
 
 function download(name, text, type) {
@@ -362,7 +444,8 @@ function download(name, text, type) {
 }
 
 function summaryRecord(s) {
-  const rec = { status: "work_in_progress_not_validated", mapped_ha: +s.mapped.toFixed(2), nodata_ha: +s.nodata.toFixed(2) };
+  const rec = { status: "work_in_progress_not_validated", area_source: state.aoi.properties?.source || "drawn on map",
+                mapped_ha: +s.mapped.toFixed(2), nodata_ha: +s.nodata.toFixed(2) };
   for (const k of s.classes) {
     const key = k.name.toLowerCase().replace(/\W+/g, "_");
     rec[`${key}_ha`] = +k.ha.toFixed(2);
@@ -376,20 +459,50 @@ function summaryRecord(s) {
   return rec;
 }
 
+const csvCell = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
 $("dl-csv").onclick = () => {
   const rec = summaryRecord(state.stats);
-  download("haiti_landcover_aoi.csv", `${Object.keys(rec).join(",")}\n${Object.values(rec).join(",")}\n`, "text/csv");
+  download("haiti_landcover_area.csv", `${Object.keys(rec).join(",")}\n${Object.values(rec).map(csvCell).join(",")}\n`, "text/csv");
 };
 $("dl-geojson").onclick = () => {
   const f = { ...state.aoi, properties: { ...(state.aoi.properties || {}), ...summaryRecord(state.stats) } };
-  download("haiti_landcover_aoi.geojson", JSON.stringify({ type: "FeatureCollection", features: [f] }), "application/geo+json");
+  download("haiti_landcover_area.geojson", JSON.stringify({ type: "FeatureCollection", features: [f] }), "application/geo+json");
 };
+
+// ---------------------------------------------------------------- shareable URL
+// #m=3d&v=class&c=lat,lng,zoom2d&a=lng,lat;lng,lat;... (a = one drawn ring, only if it's small enough)
+let hashTimer;
+function writeHash() {
+  if (!state.meta) return;
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => {
+    const c = state.mode === "3d" ? map3d.getCenter() : map.getCenter();
+    const z = state.mode === "3d" ? map3d.getZoom() + 1 : map.getZoom();
+    const p = new URLSearchParams({ m: state.mode, v: state.view, c: `${c.lat.toFixed(5)},${c.lng.toFixed(5)},${z.toFixed(1)}` });
+    const polys = state.aoi ? polygonsOf(state.aoi) : [];
+    if (polys.length === 1 && polys[0].length === 1 && polys[0][0].length <= 100) {
+      p.set("a", polys[0][0].map(([x, y]) => `${x.toFixed(5)},${y.toFixed(5)}`).join(";"));
+    }
+    history.replaceState(null, "", `#${p}`);
+  }, 300);
+}
+
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const out = { mode: p.get("m"), view: p.get("v") };
+  const c = (p.get("c") || "").split(",").map(Number);
+  if (c.length === 3 && c.every(Number.isFinite)) out.center = c;
+  const ring = (p.get("a") || "").split(";").map((s) => s.split(",").map(Number)).filter((v) => v.length === 2 && v.every(Number.isFinite));
+  if (ring.length >= 4) out.aoi = { type: "Feature", properties: { source: "shared link" }, geometry: { type: "Polygon", coordinates: [ring] } };
+  return out;
+}
 
 // ---------------------------------------------------------------- boot
 $("about-btn").onclick = () => $("about").showModal();
 $("about-close").onclick = () => $("about").close();
 
 (async function boot() {
+  const h = readHash(); // before anything moves the map and rewrites the hash
   state.meta = await (await fetch(DATA + "meta.json")).json();
   state.tiff = await GeoTIFF.fromUrl(DATA + state.meta.file);
   state.rgb = {};
@@ -398,35 +511,51 @@ $("about-close").onclick = () => $("about").close();
     state.rgb[k.code] = [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
   }
   $("legend").innerHTML = state.meta.classes
-    .map((k) => `<li><span class="swatch" style="background:${k.color}"></span>${k.name}<span class="muted small"> · ${k.blurb}</span></li>`)
-    .join("");
+    .map((k) => `<li><span class="swatch${k.code === OPEN_LAND ? " hatch" : ""}" style="background-color:${k.color}" aria-hidden="true"></span>`
+      + `<span class="what">${k.name}</span><span class="blurb">${k.blurb}</span></li>`)
+    .join("") + `<li><span class="swatch" style="background-color:#d9a21f;opacity:.45" aria-hidden="true"></span>`
+      + `<span class="what">Faded colour</span><span class="blurb">the model is unsure (under 50% confidence)</span></li>`;
   $("about-meta").textContent = `Map version ${state.meta.version}. ${state.meta.sources}`;
 
-  const opacity = +$("opacity").value, b = state.meta.bounds, t = state.meta.training_bbox;
-  const lc = new LandCoverLayer({ opacity, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
+  const opacity = +$("opacity").value, t = state.meta.training_bbox;
+  state.lc = new LandCoverLayer({ opacity, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
   L.rectangle([[t[1], t[0]], [t[3], t[2]]], { color: "#fff", weight: 1.5, dashArray: "6 5", fill: false, interactive: false }).addTo(map);
 
-  await map3dReady;
-  map3d.addSource("lc", { type: "raster", tiles: lcTiles(), tileSize: 256, maxzoom: 15, bounds: b });
-  map3d.addLayer({ id: "lc", type: "raster", source: "lc", paint: { "raster-opacity": opacity, "raster-resampling": "nearest" } });
-  map3d.addSource("outline", { type: "geojson", data: { type: "Polygon",
-    coordinates: [[[t[0], t[1]], [t[2], t[1]], [t[2], t[3]], [t[0], t[3]], [t[0], t[1]]]] } });
-  map3d.addLayer({ id: "outline", type: "line", source: "outline", paint: { "line-color": "#fff", "line-width": 1.5, "line-dasharray": [3, 2] } });
-  map3d.addSource("aoi", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-  map3d.addLayer({ id: "aoi-fill", type: "fill", source: "aoi", paint: { "fill-color": AOI_COLOR, "fill-opacity": 0.08 } });
-  map3d.addLayer({ id: "aoi-line", type: "line", source: "aoi", paint: { "line-color": AOI_COLOR, "line-width": 2.5 } });
-  syncAoi3d();
-
   $("opacity").oninput = (e) => {
-    lc.setOpacity(+e.target.value);
-    map3d.setPaintProperty("lc", "raster-opacity", +e.target.value);
+    const v = +e.target.value;
+    state.lc.setOpacity(v);
+    if (map3d.getLayer("lc")) map3d.setPaintProperty("lc", "raster-opacity", v);
+    $("opacity-out").textContent = `${Math.round(v * 100)}%`;
   };
-  document.querySelectorAll('input[name="view"]').forEach((el) => (el.onchange = (e) => {
-    state.view = e.target.value;
-    $("legend").hidden = state.view === "conf";
-    $("conf-legend").hidden = state.view !== "conf";
-    lc.redraw();
-    map3d.getSource("lc").setTiles(lcTiles()); // a new URL per view, so cached tiles of the other view aren't reused
-  }));
-  fitMapped();
-})().catch((err) => showError(`The map data failed to load: ${err.message}`));
+  document.querySelectorAll('input[name="view"]').forEach((el) => (el.onchange = (e) => setView(e.target.value)));
+
+  // 3D layers attach whenever the 3D map is ready; nothing else waits for it
+  map3dReady.then(() => {
+    map3d.resize(); // the container may have been measured before style.css applied
+    map3d.addSource("lc", { type: "raster", tiles: lcTiles(), tileSize: 256, maxzoom: 15, bounds: state.meta.bounds });
+    map3d.addLayer({ id: "lc", type: "raster", source: "lc", paint: { "raster-opacity": +$("opacity").value, "raster-resampling": "nearest" } });
+    map3d.addSource("outline", { type: "geojson", data: { type: "Polygon",
+      coordinates: [[[t[0], t[1]], [t[2], t[1]], [t[2], t[3]], [t[0], t[3]], [t[0], t[1]]]] } });
+    map3d.addLayer({ id: "outline", type: "line", source: "outline", paint: { "line-color": "#fff", "line-width": 1.5, "line-dasharray": [3, 2] } });
+    map3d.addSource("aoi", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map3d.addLayer({ id: "aoi-fill", type: "fill", source: "aoi", paint: { "fill-color": "#fff", "fill-opacity": 0.06 } });
+    map3d.addLayer({ id: "aoi-halo", type: "line", source: "aoi", paint: { "line-color": "#16201a", "line-width": 6, "line-opacity": 0.55 } });
+    map3d.addLayer({ id: "aoi-line", type: "line", source: "aoi", paint: { "line-color": "#fff", "line-width": 2.5 } });
+    syncAoi3d();
+  });
+
+  // restore a shared link, else show the whole mapped area
+  if (h.view === "conf") setView("conf");
+  if (h.mode === "2d" || !HAS_WEBGL) setMode("2d");
+  if (!HAS_WEBGL) $("mode-switch").hidden = true;
+  if (h.center) flyToNow(h.center);
+  else fitMapped();
+  if (h.aoi) setAoi(h.aoi, { fit: !h.center });
+  writeHash();
+  setTimeout(() => { if (!state.firstTile) $("map-status-msg").textContent = "Still loading land cover… (slow connection)"; }, 8000);
+})().catch((err) => mapError(`The map data didn't load (${err.message}). Check your connection and reload the page.`));
+
+function flyToNow([lat, lng, z2d]) {
+  if (state.mode === "3d") map3d.jumpTo({ center: [lng, lat], zoom: z2d - 1 });
+  else map.setView([lat, lng], z2d, { animate: false });
+}

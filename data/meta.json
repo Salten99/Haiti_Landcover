@@ -40,7 +40,7 @@
     {
       "code": 3,
       "name": "Open land",
-      "color": "#d8c7e8",
+      "color": "#e4e0d9",
       "potential": true,
       "blurb": "grass, shrub, bare soil, rock, roads, buildings (the model's Bare class)"
     }
