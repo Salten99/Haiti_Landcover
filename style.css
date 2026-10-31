@@ -87,13 +87,16 @@ input[type="radio"], input[type="range"] { accent-color: var(--ink); }
   padding: 0 14px; border-radius: 8px; border: 1.5px solid var(--ink); background: var(--panel); color: var(--ink);
   font-size: 0.9375rem; font-weight: 700;
 }
-.btn.primary, .btn[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.btn.primary { background: var(--ink); color: var(--panel); }
+/* the active drawing tool: its own colour, so a primary button still visibly changes when pressed */
+.btn[aria-pressed="true"], .btn.primary[aria-pressed="true"] { background: var(--focus); border-color: var(--focus); color: #fff; }
 .btn.quiet { border-color: var(--line); font-weight: 400; }
 .btn.small { min-height: 32px; padding: 0 10px; font-size: var(--fs-small); }
 .btn:active, .mode-switch button:active { transform: scale(0.97); }
 @media (hover: hover) and (pointer: fine) {
   .btn:hover { background: var(--hover); }
-  .btn.primary:hover, .btn[aria-pressed="true"]:hover { background: #2b372f; }
+  .btn.primary:hover { background: #2b372f; }
+  .btn[aria-pressed="true"]:hover { background: #0a56b3; }
   .icon-btn:hover { background: rgb(0 0 0 / 0.06); }
 }
 .link-btn { background: none; border: 0; padding: 4px 0; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; min-height: var(--tap); }
@@ -168,7 +171,7 @@ th:not(:first-child), .num { text-align: right; font-variant-numeric: tabular-nu
   border: 0; border-radius: 7px; background: transparent; color: var(--ink);
   min-height: 34px; padding: 0 14px; font-weight: 700; font-size: 0.9375rem;
 }
-@media (pointer: coarse) { .mode-switch button { min-height: 40px; } }
+@media (pointer: coarse) { .mode-switch button { min-height: 40px; } .key-hint { display: none; } }
 .mode-switch button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
 .mode-switch[hidden] { display: none; }
 
@@ -225,5 +228,5 @@ dialog h2 { margin-top: 0; font-size: var(--fs-h2); }
   .panel { width: auto; border-right: 0; border-top: 1px solid var(--line); flex: 1; min-height: 0; padding: 0 16px 16px; }
   .map-wrap { flex: none; height: 45vh; min-height: 0; }
   .map-hint { display: none; }
-  .draw-bar { top: 60px; }
+  .draw-bar { top: 60px; white-space: normal; width: max-content; max-width: calc(100% - 24px); }
 }

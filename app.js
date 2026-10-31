@@ -85,6 +85,7 @@ async function inspect(lat, lng) {
       ? `<strong>${k.name}</strong><br>Model confidence ${v}%${v < LOW_CONF ? " (unsure)" : ""}`
       : "No data here: cloud in the 2025 images.";
   }
+  $("inspect-live").textContent = html.replace(/<br>/g, ". ").replace(/<[^>]+>/g, ""); // popups aren't announced
   return `<div class="popup-class">${html}<br><span class="coords">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`;
 }
 
@@ -410,7 +411,9 @@ function render(s) {
   $("results-body").hidden = false;
 
   $("potential").textContent = `${ha10(pot)} ha`;
-  $("potential-sub").textContent = `${fmt((pot / s.mapped) * 100)}% of ${ha10(s.mapped)} ha analysed (Farmland + Open land)`;
+  const part = (code) => s.classes.find((k) => k.code === code).ha;
+  $("potential-sub").textContent = `${ha10(part(0))} ha farmland plus ${ha10(part(OPEN_LAND))} ha open land `
+    + `(grass, shrub, rock, roads, buildings): ${fmt((pot / s.mapped) * 100)}% of the ${ha10(s.mapped)} ha analysed`;
   const tbody = $("class-table").querySelector("tbody");
   tbody.innerHTML = "";
   for (const k of s.classes) {

@@ -57,7 +57,7 @@
             <option value="19.145,-72.007">Hinche</option>
           </select>
         </label>
-        <p class="hint">Click or tap the map to see what is mapped at a spot. Keyboard: focus the map and press Enter.</p>
+        <p class="hint">Click or tap the map to see what is mapped at a spot. Keyboard: focus the map and press Enter; to analyse an area without a mouse, upload a file.</p>
       </section>
 
       <section id="results" class="step">
@@ -110,15 +110,16 @@
     </aside>
 
     <div class="map-wrap" id="map-wrap" tabindex="-1">
-      <div id="map3d" class="map" aria-label="3D map. Press Enter to inspect the centre."></div>
-      <div id="map" class="map is-off" aria-label="2D map. Press Enter to inspect the centre."></div>
+      <div id="map3d" class="map" role="region" aria-label="3D map. Press Enter to inspect the centre."></div>
+      <div id="map" class="map is-off" role="region" aria-label="2D map. Press Enter to inspect the centre."></div>
+      <p id="inspect-live" class="sr-only" aria-live="polite"></p>
       <div id="mode-switch" class="mode-switch" role="group" aria-label="Map view">
         <button type="button" data-mode="3d" aria-pressed="true">3D terrain</button>
         <button type="button" data-mode="2d" aria-pressed="false">2D</button>
       </div>
       <div id="draw-bar" class="draw-bar" role="status" hidden>
         <span id="draw-msg"></span>
-        <button id="draw-cancel" type="button" class="btn quiet small">Cancel (Esc)</button>
+        <button id="draw-cancel" type="button" class="btn quiet small">Cancel<span class="key-hint"> (Esc)</span></button>
       </div>
       <div id="map-status" class="map-status" role="status">
         <span class="spinner" aria-hidden="true"></span><span id="map-status-msg">Loading land cover…</span>
