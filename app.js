@@ -5,7 +5,15 @@ const DATA = "data/";
 const MAX_PIXELS = 4e6; // larger areas are read from a coarser overview to stay responsive
 const NODATA = 255;
 
-const state = { meta: null, tiff: null, aoi: null, stats: null };
+const state = { meta: null, tiff: null, aoi: null, stats: null, view: "class", drawing: false };
+const LOW_CONF = 50;
+
+// viridis-like ramp for the confidence view (perceptually even, colour-blind safe): 0% -> yellow, 100% -> purple
+const RAMP = [[253, 231, 37], [33, 145, 140], [68, 1, 84]];
+const CONF_RGB = Array.from({ length: 101 }, (_, v) => {
+  const t = (v / 100) * 2, i = Math.min(1, Math.floor(t)), f = t - i;
+  return [...RAMP[i].map((a, k) => Math.round(a + (RAMP[i + 1][k] - a) * f)), 255];
+});
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------- map
@@ -32,13 +40,14 @@ const LandCoverLayer = L.GridLayer.extend({
     // shortcut: linear latitude within a Web-Mercator tile; error is sub-pixel at Haiti's latitude
     state.tiff
       .readRasters({ bbox: [nw.lng, se.lat, se.lng, nw.lat], width: size.x, height: size.y,
-                     samples: [0], fillValue: NODATA, resampleMethod: "nearest" })
+                     samples: [state.view === "conf" ? 1 : 0], fillValue: NODATA, resampleMethod: "nearest" })
       .then((r) => {
         const ctx = tile.getContext("2d");
         const img = ctx.createImageData(size.x, size.y);
         const px = r[0];
+        const lut = state.view === "conf" ? CONF_RGB : state.rgb;
         for (let i = 0; i < px.length; i++) {
-          const c = state.rgb[px[i]];
+          const c = lut[px[i]];
           if (!c) continue;
           img.data.set(c, i * 4);
         }
@@ -55,6 +64,36 @@ const drawOpts = { shapeOptions: { color: "#ffd166", weight: 2, fillOpacity: 0.0
 $("draw-rect").onclick = () => new L.Draw.Rectangle(map, drawOpts).enable();
 $("draw-poly").onclick = () => new L.Draw.Polygon(map, { ...drawOpts, allowIntersection: false }).enable();
 map.on(L.Draw.Event.CREATED, (e) => setAoi(e.layer.toGeoJSON()));
+map.on(L.Draw.Event.DRAWSTART, () => (state.drawing = true));
+map.on(L.Draw.Event.DRAWSTOP, () => setTimeout(() => (state.drawing = false), 0)); // let the final click pass first
+
+// click / tap a spot: what is mapped there
+map.on("click", async (e) => {
+  if (state.drawing || !state.tiff) return;
+  const { lat, lng } = e.latlng, b = state.meta.bounds, r = state.meta.res / 2;
+  let html = "Outside the mapped area.";
+  if (lng > b[0] && lng < b[2] && lat > b[1] && lat < b[3]) {
+    const [[c], [v]] = await state.tiff.readRasters({ bbox: [lng - r, lat - r, lng + r, lat + r], width: 1, height: 1,
+                                                       samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" });
+    const k = state.meta.classes.find((x) => x.code === c);
+    html = k
+      ? `<strong>${k.name}</strong><br>Model confidence ${v}%${v < LOW_CONF ? " (low)" : ""}`
+      : "No data here (cloud in the 2025 images).";
+  }
+  L.popup().setLatLng(e.latlng)
+    .setContent(`<div class="popup-class">${html}<br><span style="color:#777">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`)
+    .openOn(map);
+});
+
+$("jump").onchange = (e) => {
+  if (!e.target.value) return fitMapped();
+  const [lat, lng] = e.target.value.split(",").map(Number);
+  map.setView([lat, lng], 14);
+};
+$("banner-close").onclick = () => {
+  $("banner").hidden = true;
+  map.invalidateSize();
+};
 $("clear").onclick = () => setAoi(null);
 
 $("upload").onchange = async (e) => {
@@ -137,7 +176,7 @@ async function analyse(feature) {
 
   const dx = (x1 - x0) / w, dy = (y1 - y0) / h;
   const counts = new Float64Array(256);
-  let confSum = 0, confArea = 0;
+  let confSum = 0, confArea = 0, lowArea = 0;
   for (let r = 0; r < h; r++) {
     const lat = y1 - (r + 0.5) * dy;
     const ha = (dx * 111320 * Math.cos((lat * Math.PI) / 180) * dy * 110574) / 1e4;
@@ -145,7 +184,10 @@ async function analyse(feature) {
       const i = r * w + c;
       if (!inside[i]) continue;
       counts[cls[i]] += ha;
-      if (cls[i] !== NODATA && conf[i] !== NODATA) { confSum += conf[i] * ha; confArea += ha; }
+      if (cls[i] !== NODATA && conf[i] !== NODATA) {
+        confSum += conf[i] * ha; confArea += ha;
+        if (conf[i] < LOW_CONF) lowArea += ha;
+      }
     }
   }
 
@@ -153,8 +195,8 @@ async function analyse(feature) {
   const mapped = classes.reduce((s, k) => s + k.ha, 0);
   state.stats = {
     classes, mapped, nodata: counts[NODATA], meanConfidence: confArea ? confSum / confArea : null,
+    lowShare: confArea ? lowArea / confArea : null,
     resolutionM: Math.round(dx * 111320 * Math.cos((((y0 + y1) / 2) * Math.PI) / 180)),
-    trainingOverlap: overlapShare([x0, y0, x1, y1], state.meta.training_bbox),
   };
   render(state.stats);
 }
@@ -191,12 +233,6 @@ function rasterizeMask(polys, [x0, y0, x1, y1], w, h) {
   return out;
 }
 
-function overlapShare([x0, y0, x1, y1], t) {
-  const ix = Math.max(0, Math.min(x1, t[2]) - Math.max(x0, t[0]));
-  const iy = Math.max(0, Math.min(y1, t[3]) - Math.max(y0, t[1]));
-  return (ix * iy) / ((x1 - x0) * (y1 - y0));
-}
-
 // ---------------------------------------------------------------- output
 const fmt = (v, d = 0) => v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 
@@ -219,16 +255,13 @@ function render(s) {
   const pot = s.classes.filter((k) => k.potential).reduce((a, k) => a + k.ha, 0);
   $("potential").textContent = `${fmt(pot)} ha (${fmt((pot / s.mapped) * 100, 1)}%)`;
   $("confidence").textContent = s.meanConfidence == null ? "–" : `${fmt(s.meanConfidence)}%`;
+  $("low-conf").textContent = s.lowShare == null ? "–" : `${fmt(s.lowShare * 100)}%`;
   $("nodata").textContent = `${fmt(s.nodata)} ha`;
   $("resolution").textContent = `${s.resolutionM} m pixels`;
 
   const warn = $("warning");
-  if (s.trainingOverlap < 0.5) {
-    warn.hidden = false;
-    warn.textContent = s.trainingOverlap > 0
-      ? "Most of this area is outside the region the model learned from. Treat the numbers as rough."
-      : "This area is outside the region the model learned from. Treat the numbers as rough, especially for towns, mangroves and humid forest.";
-  } else warn.hidden = true;
+  warn.hidden = !(s.lowShare > 0.3);
+  warn.textContent = `The model is unsure about ${fmt(s.lowShare * 100)}% of this area. Switch the map to "Model confidence" to see where, and check those spots on the imagery.`;
 }
 
 function download(name, text, type) {
@@ -240,14 +273,17 @@ function download(name, text, type) {
 }
 
 function summaryRecord(s) {
-  const rec = { mapped_ha: +s.mapped.toFixed(2), nodata_ha: +s.nodata.toFixed(2) };
+  const rec = { status: "work_in_progress_not_validated", mapped_ha: +s.mapped.toFixed(2), nodata_ha: +s.nodata.toFixed(2) };
   for (const k of s.classes) {
-    rec[`${k.name.toLowerCase()}_ha`] = +k.ha.toFixed(2);
-    rec[`${k.name.toLowerCase()}_pct`] = +((k.ha / s.mapped) * 100).toFixed(2);
+    const key = k.name.toLowerCase().replace(/\W+/g, "_");
+    rec[`${key}_ha`] = +k.ha.toFixed(2);
+    rec[`${key}_pct`] = +((k.ha / s.mapped) * 100).toFixed(2);
   }
   rec.mean_confidence_pct = s.meanConfidence == null ? null : +s.meanConfidence.toFixed(1);
+  rec.low_confidence_pct = s.lowShare == null ? null : +(s.lowShare * 100).toFixed(1);
   rec.resolution_m = s.resolutionM;
   rec.map_version = state.meta.version;
+  rec.exported = new Date().toISOString().slice(0, 10);
   return rec;
 }
 
@@ -272,15 +308,26 @@ $("about-close").onclick = () => $("about").close();
     const n = parseInt(k.color.slice(1), 16);
     state.rgb[k.code] = [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
   }
+  document.querySelectorAll('input[name="view"]').forEach((el) => (el.onchange = (e) => {
+    state.view = e.target.value;
+    $("legend").hidden = state.view === "conf";
+    $("conf-legend").hidden = state.view !== "conf";
+    lc.redraw();
+  }));
   $("legend").innerHTML = state.meta.classes
     .map((k) => `<li><span class="swatch" style="background:${k.color}"></span>${k.name}<span class="muted small"> · ${k.blurb}</span></li>`)
     .join("");
   $("about-meta").textContent = `Map version ${state.meta.version}. ${state.meta.sources}`;
 
-  const lc = new LandCoverLayer({ opacity: +$("opacity").value, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
+  var lc = new LandCoverLayer({ opacity: +$("opacity").value, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
   $("opacity").oninput = (e) => lc.setOpacity(+e.target.value);
   const t = state.meta.training_bbox;
   L.rectangle([[t[1], t[0]], [t[3], t[2]]], { color: "#fff", weight: 1.5, dashArray: "6 5", fill: false, interactive: false }).addTo(map);
-  const b = state.meta.bounds;
-  map.fitBounds([[b[1], b[0]], [b[3], b[2]]]);
+  fitMapped();
 })().catch((err) => showError(`The map data failed to load: ${err.message}`));
+
+function fitMapped() {
+  map.invalidateSize(); // the banner can change the map's size after Leaflet first measured it
+  const b = state.meta.bounds;
+  map.fitBounds([[b[1], b[0]], [b[3], b[2]]], { animate: false });
+}

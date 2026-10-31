@@ -12,14 +12,29 @@
 <body>
   <header class="topbar">
     <h1>Central Plateau Land Cover <span class="sub">Haiti</span></h1>
-    <span class="badge" title="Accuracy has not yet been measured against independent reference points">Preliminary · 2025</span>
+    <span class="badge" title="Accuracy has not yet been measured against independent reference points">Work in progress · 2025</span>
     <button id="about-btn" class="link-btn" type="button">About the map</button>
   </header>
+  <div id="banner" class="banner" role="status">
+    <p><strong>Work in progress, not yet validated.</strong> This map is an early version. Its accuracy has not yet been checked against independent ground-truth points (about 3 in 4 pixels right in cross-validation). Read areas as estimates, and check low-confidence spots on the imagery.</p>
+    <button id="banner-close" type="button" class="icon-btn" aria-label="Dismiss notice">×</button>
+  </div>
 
   <main class="layout">
     <aside class="panel" aria-label="Analysis">
       <section>
         <h2>1. Pick an area</h2>
+        <label class="field">Go to
+          <select id="jump">
+            <option value="">Whole mapped area</option>
+            <option value="18.835,-72.105">Mirebalais</option>
+            <option value="18.830,-71.935">Lascahobas</option>
+            <option value="18.890,-71.950">Lake Péligre</option>
+            <option value="19.017,-71.963">Thomonde</option>
+            <option value="19.145,-72.007">Hinche</option>
+          </select>
+        </label>
+        <p class="muted small">Tip: click or tap the map to see what is mapped at that spot.</p>
         <div class="btn-row">
           <button id="draw-rect" type="button">Draw rectangle</button>
           <button id="draw-poly" type="button">Draw polygon</button>
@@ -44,9 +59,11 @@
           <dl class="facts">
             <div><dt>Potential farmland</dt><dd id="potential"></dd></div>
             <div><dt>Mean model confidence</dt><dd id="confidence"></dd></div>
+            <div><dt>Area with low confidence (&lt;50%)</dt><dd id="low-conf"></dd></div>
             <div><dt>No data (cloud / outside the map)</dt><dd id="nodata"></dd></div>
             <div><dt>Resolution used</dt><dd id="resolution"></dd></div>
           </dl>
+          <p class="muted small">Not yet validated: treat hectares as estimates.</p>
           <div class="btn-row">
             <button id="dl-csv" type="button">Download CSV</button>
             <button id="dl-geojson" type="button">Download GeoJSON</button>
@@ -56,10 +73,19 @@
 
       <section>
         <h2>Map layers</h2>
-        <label class="slider">Land-cover opacity
+        <fieldset class="view">
+          <legend class="sr-only">Map view</legend>
+          <label><input type="radio" name="view" value="class" checked> Land cover</label>
+          <label><input type="radio" name="view" value="conf"> Model confidence</label>
+        </fieldset>
+        <label class="slider">Layer opacity
           <input id="opacity" type="range" min="0" max="1" step="0.05" value="0.7">
         </label>
         <ul id="legend" class="legend"></ul>
+        <div id="conf-legend" class="conf-legend" hidden>
+          <span class="ramp"></span>
+          <span class="ramp-labels"><span>unsure (0%)</span><span>sure (100%)</span></span>
+        </div>
         <p class="muted small"><span class="swatch outline"></span>Mapped area (about 2,200 km²)</p>
       </section>
     </aside>
@@ -69,10 +95,10 @@
 
   <dialog id="about">
     <h2>About this map</h2>
-    <p>Covers about 2,200 km² of the Central Plateau around Lake Péligre, Mirebalais and Hinche. Each 20 m pixel is classed as Farmland, Forest, Water or Bare for the 2025 growing season. A random-forest model reads Sentinel-2 imagery from three periods: before planting (Feb–Mar), mid-season (May–Jun) and after harvest (Aug–Sep).</p>
+    <p>Covers about 2,200 km² of the Central Plateau around Lake Péligre, Mirebalais and Hinche. Each 20 m pixel is classed as Farmland, Forest, Water or Open land for the 2025 growing season. A random-forest model reads Sentinel-2 imagery from three periods: before planting (Feb–Mar), mid-season (May–Jun) and after harvest (Aug–Sep).</p>
     <p><strong>How far to trust it.</strong> The model learned from labelled fields inside this same area. In cross-validation it gets about 3 in 4 pixels right, so read small areas with care. <em>Confidence</em> is the model's own probability for the class shown. An independent accuracy check against ground-truth points is in progress.</p>
-    <p><strong>Seasons vary.</strong> The image periods follow the Central Plateau calendar: first season about March–June, a dry July, second season about August–November. Fields planted off this calendar, or left unplanted in a dry year, can be misread as Bare.</p>
-    <p><strong>Classes.</strong> “Bare” means not farmed and not tree-covered. It includes grassland, shrubland, rock, roads and buildings, because the model has no separate built-up class. “Potential farmland” is Farmland + Bare, the land that could be farmed.</p>
+    <p><strong>Seasons vary.</strong> The image periods follow the Central Plateau calendar: first season about March–June, a dry July, second season about August–November. Fields planted off this calendar, or left unplanted in a dry year, can be misread as Open land.</p>
+    <p><strong>Classes.</strong> “Open land” (the model's <em>Bare</em> class) means not farmed and not tree-covered. It includes grassland, shrubland, bare soil, rock, roads and buildings, because the model has no separate built-up class. “Potential farmland” is Farmland + Open land, the land that could be farmed.</p>
     <p><strong>Your data.</strong> Areas you draw or upload stay in your browser and are never uploaded. No farmer or plot data is in this site.</p>
     <p class="muted small" id="about-meta"></p>
     <button id="about-close" type="button">Close</button>

@@ -51,6 +51,14 @@ body {
 }
 .topbar .link-btn { margin-left: auto; }
 
+.banner {
+  display: flex; align-items: flex-start; gap: 12px; padding: 10px 16px;
+  background: var(--warn-bg); color: var(--warn-ink); border-bottom: 1px solid var(--line); font-size: 14px;
+}
+.banner p { margin: 0; flex: 1; }
+.banner[hidden] { display: none; }
+.icon-btn { background: none; border: 0; color: inherit; font-size: 20px; line-height: 1; padding: 0 4px; }
+
 .layout { flex: 1; display: flex; min-height: 0; }
 .panel {
   width: 360px; flex: none; overflow-y: auto; background: var(--panel);
@@ -97,6 +105,15 @@ th:not(:first-child) { text-align: right; }
 .facts dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
 
 .slider { display: block; font-size: 14px; color: var(--ink-2); }
+.field { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); margin-bottom: 6px; }
+.field select { font: inherit; flex: 1; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.view { border: 0; padding: 0; margin: 0 0 10px; display: flex; gap: 16px; font-size: 14px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.conf-legend { margin: 10px 0; font-size: 12.5px; color: var(--muted); }
+.conf-legend[hidden] { display: none; }
+.ramp { display: block; height: 10px; border-radius: 3px; background: linear-gradient(90deg, #fde725, #21918c, #440154); }
+.ramp-labels { display: flex; justify-content: space-between; margin-top: 3px; }
+.leaflet-container .popup-class { font: 14px/1.4 system-ui, sans-serif; }
 .slider input { width: 100%; }
 
 dialog { max-width: 560px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); padding: 20px 24px; }

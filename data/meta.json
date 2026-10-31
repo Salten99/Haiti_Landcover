@@ -39,10 +39,10 @@
     },
     {
       "code": 3,
-      "name": "Bare",
-      "color": "#c9b28a",
+      "name": "Open land",
+      "color": "#d8c7e8",
       "potential": true,
-      "blurb": "grass, shrub, rock, roads, buildings"
+      "blurb": "grass, shrub, bare soil, rock, roads, buildings (the model's Bare class)"
     }
   ],
   "sources": "Sentinel-2 L2A 2025 seasonal composites (Google Earth Engine); random forest trained on Acceso field plots and digitised forest/bare/water polygons in the Central Plateau."
