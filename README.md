@@ -2,6 +2,8 @@
 
 A static web page that maps 2025 land cover in about 2,200 km² of Haiti's Central Plateau: Farmland, Forest, Water and Bare, at 20 m. You draw a rectangle or polygon, or upload a GeoJSON or KML file. The page then reports hectares and share per class, potential farmland, and mean model confidence, and lets you download the results as CSV or GeoJSON.
 
+The map opens as a 3D terrain view (MapLibre, AWS Terrain Tiles elevation, drag with the right mouse button or Ctrl to tilt and rotate) with a flat 2D view one click away. Drawing an area switches to 2D.
+
 Everything runs in the browser. The map is a single Cloud-Optimized GeoTIFF in `data/` that the browser reads in pieces over HTTP range requests, so there is no server to run. Areas you draw never leave your browser.
 
 ## Status

@@ -67,7 +67,20 @@ body {
 .panel section { padding: 14px 0; border-bottom: 1px solid var(--line); }
 .panel section:last-child { border-bottom: 0; }
 .panel h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
-#map { flex: 1; min-height: 300px; }
+.map-wrap { flex: 1; position: relative; min-height: 300px; }
+#map, #map3d { position: absolute; inset: 0; }
+#map[hidden], #map3d[hidden] { display: none; }
+.mode-switch {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  display: flex; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+}
+.mode-switch button { border: 0; border-radius: 0; background: #fff; color: #1f2420; padding: 6px 14px; font-weight: 600; }
+.mode-switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.map-hint {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 1000; margin: 0;
+  background: rgb(0 0 0 / 0.55); color: #fff; font-size: 12.5px; padding: 4px 10px; border-radius: 6px; white-space: nowrap;
+}
+#map:not([hidden]) ~ .map-hint { display: none; }
 
 button {
   font: inherit; font-size: 14px; cursor: pointer; border-radius: 8px;
@@ -122,6 +135,13 @@ dialog h2 { margin-top: 0; }
 
 @media (max-width: 760px) {
   .layout { flex-direction: column-reverse; }
-  .panel { width: auto; border-right: 0; border-top: 1px solid var(--line); max-height: 52vh; }
-  #map { min-height: 48vh; }
+  .panel { width: auto; border-right: 0; border-top: 1px solid var(--line); flex: 1; min-height: 0; }
+  .map-wrap { flex: none; height: 45vh; min-height: 0; }
+  .map-hint { display: none; }
 }
+
+/* map popups sit on white in both themes */
+.maplibregl-popup-content, .leaflet-popup-content-wrapper { color: #1f2420; }
+/* the app fills the window, so the page itself never scrolls (the panel scrolls instead); MapLibre's
+   off-screen helpers would otherwise add a page scrollbar */
+body { overflow: hidden; }

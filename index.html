@@ -7,6 +7,7 @@
   <meta name="description" content="Draw or upload an area in Haiti's Central Plateau and get its 2025 land-cover breakdown from a Sentinel-2 random-forest model.">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -34,7 +35,7 @@
             <option value="19.145,-72.007">Hinche</option>
           </select>
         </label>
-        <p class="muted small">Tip: click or tap the map to see what is mapped at that spot.</p>
+        <p class="muted small">Tip: click or tap the map to see what is mapped at that spot. Drawing switches to the flat 2D view.</p>
         <div class="btn-row">
           <button id="draw-rect" type="button">Draw rectangle</button>
           <button id="draw-poly" type="button">Draw polygon</button>
@@ -90,7 +91,15 @@
       </section>
     </aside>
 
-    <div id="map" role="region" aria-label="Map"></div>
+    <div class="map-wrap">
+      <div id="map3d" role="region" aria-label="3D map"></div>
+      <div id="map" role="region" aria-label="2D map" hidden></div>
+      <div id="mode-switch" class="mode-switch" role="group" aria-label="Map view">
+        <button type="button" data-mode="3d" aria-pressed="true">3D terrain</button>
+        <button type="button" data-mode="2d" aria-pressed="false">2D</button>
+      </div>
+      <p class="map-hint" id="map-hint">Drag to pan · right-drag or Ctrl+drag to rotate and tilt · scroll to zoom</p>
+    </div>
   </main>
 
   <dialog id="about">
@@ -106,6 +115,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
   <script src="app.js"></script>

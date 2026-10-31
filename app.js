@@ -1,11 +1,16 @@
 // Central Plateau Land Cover explorer: everything runs in the browser. The map is one Cloud-Optimized
 // GeoTIFF (band 1 class, band 2 confidence 0-100, 255 = no data) read by HTTP range requests.
+// Two views of the same data: 3D terrain (MapLibre, default) and flat 2D (Leaflet, where drawing happens).
 
 const DATA = "data/";
 const MAX_PIXELS = 4e6; // larger areas are read from a coarser overview to stay responsive
 const NODATA = 255;
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const ESRI_ATTR = "Imagery © Esri, Maxar, Earthstar Geographics";
+const DEM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+const AOI_COLOR = "#ffd166";
 
-const state = { meta: null, tiff: null, aoi: null, stats: null, view: "class", drawing: false };
+const state = { meta: null, tiff: null, aoi: null, stats: null, view: "class", drawing: false, mode: "3d" };
 const LOW_CONF = 50;
 
 // viridis-like ramp for the confidence view (perceptually even, colour-blind safe): 0% -> yellow, 100% -> purple
@@ -16,12 +21,48 @@ const CONF_RGB = Array.from({ length: 101 }, (_, v) => {
 });
 const $ = (id) => document.getElementById(id);
 
-// ---------------------------------------------------------------- map
+// one map tile of the current view (land cover or confidence) for a lon/lat bbox, drawn into `canvas`
+async function renderTile(canvas, [west, south, east, north]) {
+  const b = state.meta.bounds;
+  if (east < b[0] || west > b[2] || north < b[1] || south > b[3]) return canvas;
+  // shortcut: linear latitude within a Web-Mercator tile; error is sub-pixel at Haiti's latitude
+  const [px] = await state.tiff.readRasters({ bbox: [west, south, east, north], width: canvas.width, height: canvas.height,
+                                              samples: [state.view === "conf" ? 1 : 0], fillValue: NODATA, resampleMethod: "nearest" });
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const lut = state.view === "conf" ? CONF_RGB : state.rgb;
+  for (let i = 0; i < px.length; i++) {
+    const c = lut[px[i]];
+    if (c) img.data.set(c, i * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function tileBbox(z, x, y) {
+  const n = 2 ** z, lon = (v) => (v / n) * 360 - 180;
+  const lat = (v) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * v) / n))) * 180) / Math.PI;
+  return [lon(x), lat(y + 1), lon(x + 1), lat(y)];
+}
+
+// what is mapped at a spot, as popup HTML
+async function inspect(lat, lng) {
+  const b = state.meta.bounds, r = state.meta.res / 2;
+  let html = "Outside the mapped area.";
+  if (lng > b[0] && lng < b[2] && lat > b[1] && lat < b[3]) {
+    const [[c], [v]] = await state.tiff.readRasters({ bbox: [lng - r, lat - r, lng + r, lat + r], width: 1, height: 1,
+                                                       samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" });
+    const k = state.meta.classes.find((x) => x.code === c);
+    html = k
+      ? `<strong>${k.name}</strong><br>Model confidence ${v}%${v < LOW_CONF ? " (low)" : ""}`
+      : "No data here (cloud in the 2025 images).";
+  }
+  return `<div class="popup-class">${html}<br><span style="color:#777">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`;
+}
+
+// ---------------------------------------------------------------- 2D map (Leaflet)
 const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([18.95, -72.6], 8);
-L.tileLayer(
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  { maxZoom: 18, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }
-).addTo(map);
+L.tileLayer(ESRI, { maxZoom: 18, attribution: ESRI_ATTR }).addTo(map);
 const drawn = new L.FeatureGroup().addTo(map);
 
 const LandCoverLayer = L.GridLayer.extend({
@@ -32,67 +73,112 @@ const LandCoverLayer = L.GridLayer.extend({
     tile.height = size.y;
     const nw = map.unproject(coords.scaleBy(size), coords.z);
     const se = map.unproject(coords.add([1, 1]).scaleBy(size), coords.z);
-    const b = state.meta.bounds;
-    if (se.lng < b[0] || nw.lng > b[2] || se.lat > b[3] || nw.lat < b[1]) {
-      done(null, tile);
-      return tile;
-    }
-    // shortcut: linear latitude within a Web-Mercator tile; error is sub-pixel at Haiti's latitude
-    state.tiff
-      .readRasters({ bbox: [nw.lng, se.lat, se.lng, nw.lat], width: size.x, height: size.y,
-                     samples: [state.view === "conf" ? 1 : 0], fillValue: NODATA, resampleMethod: "nearest" })
-      .then((r) => {
-        const ctx = tile.getContext("2d");
-        const img = ctx.createImageData(size.x, size.y);
-        const px = r[0];
-        const lut = state.view === "conf" ? CONF_RGB : state.rgb;
-        for (let i = 0; i < px.length; i++) {
-          const c = lut[px[i]];
-          if (!c) continue;
-          img.data.set(c, i * 4);
-        }
-        ctx.putImageData(img, 0, 0);
-        done(null, tile);
-      })
-      .catch((e) => done(e, tile));
+    renderTile(tile, [nw.lng, se.lat, se.lng, nw.lat]).then(() => done(null, tile), (e) => done(e, tile));
     return tile;
   },
 });
 
+map.on("click", async (e) => {
+  if (state.drawing || !state.tiff) return;
+  L.popup().setLatLng(e.latlng).setContent(await inspect(e.latlng.lat, e.latlng.lng)).openOn(map);
+});
+
+// ---------------------------------------------------------------- 3D map (MapLibre + terrain)
+maplibregl.addProtocol("lc", async (params) => {
+  const [z, x, y] = params.url.split("/").slice(-3); // lc://<view>/{z}/{x}/{y}
+  const canvas = await renderTile(Object.assign(document.createElement("canvas"), { width: 256, height: 256 }),
+                                  tileBbox(+z, +x, +y));
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+  return { data: await blob.arrayBuffer() };
+});
+
+const map3d = new maplibregl.Map({
+  container: "map3d",
+  style: {
+    version: 8,
+    sources: {
+      esri: { type: "raster", tiles: [ESRI], tileSize: 256, maxzoom: 18, attribution: ESRI_ATTR },
+      dem: { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium",
+             attribution: "Terrain: Mapzen / AWS Terrain Tiles" },
+    },
+    layers: [{ id: "esri", type: "raster", source: "esri" }],
+    terrain: { source: "dem", exaggeration: 1.5 },
+  },
+  center: [-71.94, 18.95], zoom: 10, pitch: 60, bearing: -20, maxPitch: 80,
+});
+map3d.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+map3d.on("click", async (e) => {
+  if (!state.tiff) return;
+  new maplibregl.Popup().setLngLat(e.lngLat).setHTML(await inspect(e.lngLat.lat, e.lngLat.lng)).addTo(map3d);
+});
+// style.load, not load: "load" also waits for every visible imagery and terrain tile
+const map3dReady = new Promise((res) => (map3d.isStyleLoaded() ? res() : map3d.once("style.load", res)));
+
+function lcTiles() {
+  return [`lc://${state.view}/{z}/{x}/{y}`];
+}
+
+function syncAoi3d() {
+  const src = map3d.getSource("aoi");
+  if (src) src.setData(state.aoi || { type: "FeatureCollection", features: [] });
+}
+
+// ---------------------------------------------------------------- switching views
+function setMode(mode) {
+  if (mode === state.mode) return;
+  if (mode === "2d") {
+    const c = map3d.getCenter();
+    $("map3d").hidden = true;
+    $("map").hidden = false;
+    map.invalidateSize();
+    map.setView([c.lat, c.lng], Math.round(map3d.getZoom() + 1), { animate: false }); // MapLibre zoom is one level coarser
+  } else {
+    const c = map.getCenter();
+    $("map").hidden = true;
+    $("map3d").hidden = false;
+    map3d.resize();
+    map3d.jumpTo({ center: [c.lng, c.lat], zoom: map.getZoom() - 1 });
+  }
+  state.mode = mode;
+  document.querySelectorAll("#mode-switch button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+}
+document.querySelectorAll("#mode-switch button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+
+function flyTo(lat, lng, zoom2d) {
+  if (state.mode === "3d") map3d.flyTo({ center: [lng, lat], zoom: zoom2d - 1, pitch: 60 });
+  else map.setView([lat, lng], zoom2d);
+}
+
+function fitMapped() {
+  const b = state.meta.bounds;
+  if (state.mode === "3d") map3d.fitBounds([[b[0], b[1]], [b[2], b[3]]], { pitch: 60, bearing: -20, padding: 40, duration: 0 });
+  else {
+    map.invalidateSize(); // the banner can change the map's size after Leaflet first measured it
+    map.fitBounds([[b[1], b[0]], [b[3], b[2]]], { animate: false });
+  }
+}
+
 // ---------------------------------------------------------------- AOI input
-const drawOpts = { shapeOptions: { color: "#ffd166", weight: 2, fillOpacity: 0.05 } };
-$("draw-rect").onclick = () => new L.Draw.Rectangle(map, drawOpts).enable();
-$("draw-poly").onclick = () => new L.Draw.Polygon(map, { ...drawOpts, allowIntersection: false }).enable();
+const drawOpts = { shapeOptions: { color: AOI_COLOR, weight: 2, fillOpacity: 0.05 } };
+function startDraw(Handler, opts) {
+  setMode("2d"); // drawing on tilted terrain misplaces vertices, so draw in the flat view
+  new Handler(map, opts).enable();
+}
+$("draw-rect").onclick = () => startDraw(L.Draw.Rectangle, drawOpts);
+$("draw-poly").onclick = () => startDraw(L.Draw.Polygon, { ...drawOpts, allowIntersection: false });
 map.on(L.Draw.Event.CREATED, (e) => setAoi(e.layer.toGeoJSON()));
 map.on(L.Draw.Event.DRAWSTART, () => (state.drawing = true));
 map.on(L.Draw.Event.DRAWSTOP, () => setTimeout(() => (state.drawing = false), 0)); // let the final click pass first
 
-// click / tap a spot: what is mapped there
-map.on("click", async (e) => {
-  if (state.drawing || !state.tiff) return;
-  const { lat, lng } = e.latlng, b = state.meta.bounds, r = state.meta.res / 2;
-  let html = "Outside the mapped area.";
-  if (lng > b[0] && lng < b[2] && lat > b[1] && lat < b[3]) {
-    const [[c], [v]] = await state.tiff.readRasters({ bbox: [lng - r, lat - r, lng + r, lat + r], width: 1, height: 1,
-                                                       samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" });
-    const k = state.meta.classes.find((x) => x.code === c);
-    html = k
-      ? `<strong>${k.name}</strong><br>Model confidence ${v}%${v < LOW_CONF ? " (low)" : ""}`
-      : "No data here (cloud in the 2025 images).";
-  }
-  L.popup().setLatLng(e.latlng)
-    .setContent(`<div class="popup-class">${html}<br><span style="color:#777">${lat.toFixed(5)}, ${lng.toFixed(5)}</span></div>`)
-    .openOn(map);
-});
-
 $("jump").onchange = (e) => {
   if (!e.target.value) return fitMapped();
   const [lat, lng] = e.target.value.split(",").map(Number);
-  map.setView([lat, lng], 14);
+  flyTo(lat, lng, 14);
 };
 $("banner-close").onclick = () => {
   $("banner").hidden = true;
   map.invalidateSize();
+  map3d.resize();
 };
 $("clear").onclick = () => setAoi(null);
 
@@ -133,6 +219,7 @@ function setAoi(feature) {
   state.aoi = feature;
   state.stats = null;
   $("clear").hidden = !feature;
+  syncAoi3d();
   if (!feature) {
     $("results-body").hidden = true;
     $("results-empty").hidden = false;
@@ -140,7 +227,9 @@ function setAoi(feature) {
     return;
   }
   const layer = L.geoJSON(feature, { style: drawOpts.shapeOptions }).addTo(drawn);
-  map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+  const lb = layer.getBounds();
+  if (state.mode === "3d") map3d.fitBounds([[lb.getWest(), lb.getSouth()], [lb.getEast(), lb.getNorth()]], { padding: 60, pitch: 55 });
+  else map.fitBounds(lb, { padding: [30, 30] });
   analyse(feature).catch((err) => showError(`Analysis failed: ${err.message}`));
 }
 
@@ -308,26 +397,36 @@ $("about-close").onclick = () => $("about").close();
     const n = parseInt(k.color.slice(1), 16);
     state.rgb[k.code] = [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
   }
-  document.querySelectorAll('input[name="view"]').forEach((el) => (el.onchange = (e) => {
-    state.view = e.target.value;
-    $("legend").hidden = state.view === "conf";
-    $("conf-legend").hidden = state.view !== "conf";
-    lc.redraw();
-  }));
   $("legend").innerHTML = state.meta.classes
     .map((k) => `<li><span class="swatch" style="background:${k.color}"></span>${k.name}<span class="muted small"> · ${k.blurb}</span></li>`)
     .join("");
   $("about-meta").textContent = `Map version ${state.meta.version}. ${state.meta.sources}`;
 
-  var lc = new LandCoverLayer({ opacity: +$("opacity").value, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
-  $("opacity").oninput = (e) => lc.setOpacity(+e.target.value);
-  const t = state.meta.training_bbox;
+  const opacity = +$("opacity").value, b = state.meta.bounds, t = state.meta.training_bbox;
+  const lc = new LandCoverLayer({ opacity, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
   L.rectangle([[t[1], t[0]], [t[3], t[2]]], { color: "#fff", weight: 1.5, dashArray: "6 5", fill: false, interactive: false }).addTo(map);
+
+  await map3dReady;
+  map3d.addSource("lc", { type: "raster", tiles: lcTiles(), tileSize: 256, maxzoom: 15, bounds: b });
+  map3d.addLayer({ id: "lc", type: "raster", source: "lc", paint: { "raster-opacity": opacity, "raster-resampling": "nearest" } });
+  map3d.addSource("outline", { type: "geojson", data: { type: "Polygon",
+    coordinates: [[[t[0], t[1]], [t[2], t[1]], [t[2], t[3]], [t[0], t[3]], [t[0], t[1]]]] } });
+  map3d.addLayer({ id: "outline", type: "line", source: "outline", paint: { "line-color": "#fff", "line-width": 1.5, "line-dasharray": [3, 2] } });
+  map3d.addSource("aoi", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map3d.addLayer({ id: "aoi-fill", type: "fill", source: "aoi", paint: { "fill-color": AOI_COLOR, "fill-opacity": 0.08 } });
+  map3d.addLayer({ id: "aoi-line", type: "line", source: "aoi", paint: { "line-color": AOI_COLOR, "line-width": 2.5 } });
+  syncAoi3d();
+
+  $("opacity").oninput = (e) => {
+    lc.setOpacity(+e.target.value);
+    map3d.setPaintProperty("lc", "raster-opacity", +e.target.value);
+  };
+  document.querySelectorAll('input[name="view"]').forEach((el) => (el.onchange = (e) => {
+    state.view = e.target.value;
+    $("legend").hidden = state.view === "conf";
+    $("conf-legend").hidden = state.view !== "conf";
+    lc.redraw();
+    map3d.getSource("lc").setTiles(lcTiles()); // a new URL per view, so cached tiles of the other view aren't reused
+  }));
   fitMapped();
 })().catch((err) => showError(`The map data failed to load: ${err.message}`));
-
-function fitMapped() {
-  map.invalidateSize(); // the banner can change the map's size after Leaflet first measured it
-  const b = state.meta.bounds;
-  map.fitBounds([[b[1], b[0]], [b[3], b[2]]], { animate: false });
-}
