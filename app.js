@@ -63,7 +63,12 @@ function firstTileShown() {
   state.firstTile = true;
   $("map-status").classList.add("done");
   // terrain loads only after the land cover is visible, so a slow connection sees the answer first
-  map3dReady.then(() => map3d.setTerrain({ source: "dem", exaggeration: 1.4 }));
+  map3dReady.then(() => {
+    const addTerrain = () => map3d.setTerrain({ source: "dem", exaggeration: 1.4 });
+    // terrain added mid-flight throws inside MapLibre's frame and freezes the map for good
+    if (map3d.isMoving()) map3d.once("moveend", addTerrain);
+    else addTerrain();
+  });
 }
 
 function mapError(msg) {
@@ -552,7 +557,7 @@ $("about-close").onclick = () => $("about").close();
   if (h.mode === "2d" || !HAS_WEBGL) setMode("2d");
   if (!HAS_WEBGL) $("mode-switch").hidden = true;
   if (h.center) flyToNow(h.center);
-  else fitMapped();
+  else if (!$("jump").value) fitMapped(); // don't undo a place picked while the page was loading
   if (h.aoi) setAoi(h.aoi, { fit: !h.center });
   writeHash();
   setTimeout(() => { if (!state.firstTile) $("map-status-msg").textContent = "Still loading land cover… (slow connection)"; }, 8000);
