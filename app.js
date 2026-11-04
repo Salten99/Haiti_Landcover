@@ -27,20 +27,24 @@ const HATCH = [156, 146, 133, 255]; // Open land stripes: a second cue besides c
 
 // ---------------------------------------------------------------- tiles
 // one map tile of the current view for a lon/lat bbox, drawn into `canvas`
-async function renderTile(canvas, [west, south, east, north], from) {
+async function renderTile(canvas, [west, south, east, north], from, view = state.view) {
   const b = state.meta.bounds;
   if (east < b[0] || west > b[2] || north < b[1] || south > b[3]) return canvas;
   const w = canvas.width, h = canvas.height;
   // shortcut: linear latitude within a Web-Mercator tile; error is sub-pixel at Haiti's latitude
   const [cls, conf] = await state.tiff.readRasters({ bbox: [west, south, east, north], width: w, height: h,
-                                                     samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" });
+                                                     samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest" })
+    .catch((err) => {
+      if (from === state.mode) mapError(`Some of the land cover didn't load (${err.message}). Check your connection and reload the page.`);
+      throw err;
+    });
   const ctx = canvas.getContext("2d");
   const img = ctx.createImageData(w, h);
   let painted = 0;
   for (let i = 0; i < cls.length; i++) {
     if (cls[i] === NODATA) continue;
     let c;
-    if (state.view === "conf") c = CONF_RGB[conf[i]];
+    if (view === "conf") c = CONF_RGB[conf[i]];
     else {
       const x = i % w, y = (i / w) | 0;
       c = cls[i] === OPEN_LAND && (x + y) % 8 < 2 ? HATCH : state.rgb[cls[i]];
@@ -49,8 +53,13 @@ async function renderTile(canvas, [west, south, east, north], from) {
     if (c) { img.data.set(c, i * 4); painted++; }
   }
   ctx.putImageData(img, 0, 0);
-  if (painted && !state.firstTile && from === state.mode) firstTileShown(); // the hidden map doesn't count
+  if (painted) tilesSettled(from);
   return canvas;
+}
+
+// also runs when a map finishes loading: a view with no land cover never paints a tile
+function tilesSettled(from) {
+  if (!state.firstTile && from === state.mode) firstTileShown(); // the hidden map doesn't count
 }
 
 function tileBbox(z, x, y) {
@@ -61,7 +70,7 @@ function tileBbox(z, x, y) {
 
 function firstTileShown() {
   state.firstTile = true;
-  $("map-status").classList.add("done");
+  if (!$("map-status").classList.contains("error")) $("map-status").classList.add("done"); // failed tiles need a reload
   // terrain loads only after the land cover is visible, so a slow connection sees the answer first
   map3dReady.then(() => {
     const addTerrain = () => map3d.setTerrain({ source: "dem", exaggeration: 1.4 });
@@ -122,9 +131,9 @@ map.on("moveend", writeHash);
 
 // ---------------------------------------------------------------- 3D map (MapLibre + terrain)
 maplibregl.addProtocol("lc", async (params) => {
-  const [z, x, y] = params.url.split("/").slice(-3); // lc://<view>/{z}/{x}/{y}
+  const [view, z, x, y] = params.url.split("/").slice(-4); // lc://<view>/{z}/{x}/{y}
   const canvas = await renderTile(Object.assign(document.createElement("canvas"), { width: 256, height: 256 }),
-                                  tileBbox(+z, +x, +y), "3d");
+                                  tileBbox(+z, +x, +y), "3d", view);
   const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
   return { data: await blob.arrayBuffer() };
 });
@@ -314,7 +323,9 @@ function setAoi(feature, { fit = true } = {}) {
   const layer = L.geoJSON(feature, { style: AOI_LINE, interactive: false }).addTo(drawn);
   const lb = layer.getBounds();
   if (fit) fitBox([lb.getWest(), lb.getSouth(), lb.getEast(), lb.getNorth()], 60);
-  analyse(feature).catch((err) => setStatus(`The analysis failed (${err.message}). Try a smaller area, or reload the page.`, "error"));
+  analyse(feature).catch((err) => {
+    if (state.aoi === feature) setStatus(`The analysis failed (${err.message}). Try a smaller area, or reload the page.`, "error");
+  });
 }
 
 function setStatus(msg, kind = "") {
@@ -342,6 +353,7 @@ async function analyse(feature) {
   const [cls, conf] = await state.tiff.readRasters({
     bbox: [x0, y0, x1, y1], width: w, height: h, samples: [0, 1], fillValue: NODATA, resampleMethod: "nearest",
   });
+  if (state.aoi !== feature) return; // the area changed while this one was being read
   const inside = rasterizeMask(polys, [x0, y0, x1, y1], w, h);
 
   const dx = (x1 - x0) / w, dy = (y1 - y0) / h;
@@ -487,7 +499,8 @@ function writeHash() {
     const c = state.mode === "3d" ? map3d.getCenter() : map.getCenter();
     const z = state.mode === "3d" ? map3d.getZoom() + 1 : map.getZoom();
     const p = new URLSearchParams({ m: state.mode, v: state.view, c: `${c.lat.toFixed(5)},${c.lng.toFixed(5)},${z.toFixed(1)}` });
-    const polys = state.aoi ? polygonsOf(state.aoi) : [];
+    const source = state.aoi?.properties?.source;
+    const polys = state.aoi && (!source || source === "shared link") ? polygonsOf(state.aoi) : []; // uploads stay out of the URL
     if (polys.length === 1 && polys[0].length === 1 && polys[0][0].length <= 100) {
       p.set("a", polys[0][0].map(([x, y]) => `${x.toFixed(5)},${y.toFixed(5)}`).join(";"));
     }
@@ -499,7 +512,7 @@ function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   const out = { mode: p.get("m"), view: p.get("v") };
   const c = (p.get("c") || "").split(",").map(Number);
-  if (c.length === 3 && c.every(Number.isFinite)) out.center = c;
+  if (c.length === 3 && c.every(Number.isFinite) && Math.abs(c[0]) <= 90 && Math.abs(c[1]) <= 180) out.center = c;
   const ring = (p.get("a") || "").split(";").map((s) => s.split(",").map(Number)).filter((v) => v.length === 2 && v.every(Number.isFinite));
   if (ring.length >= 4) out.aoi = { type: "Feature", properties: { source: "shared link" }, geometry: { type: "Polygon", coordinates: [ring] } };
   return out;
@@ -527,6 +540,7 @@ $("about-close").onclick = () => $("about").close();
 
   const opacity = +$("opacity").value, t = state.meta.training_bbox;
   state.lc = new LandCoverLayer({ opacity, maxNativeZoom: 15, maxZoom: 18 }).addTo(map);
+  state.lc.on("load", () => tilesSettled("2d"));
   L.rectangle([[t[1], t[0]], [t[3], t[2]]], { color: "#fff", weight: 1.5, dashArray: "6 5", fill: false, interactive: false }).addTo(map);
 
   $("opacity").oninput = (e) => {
@@ -550,6 +564,7 @@ $("about-close").onclick = () => $("about").close();
     map3d.addLayer({ id: "aoi-halo", type: "line", source: "aoi", paint: { "line-color": "#16201a", "line-width": 6, "line-opacity": 0.55 } });
     map3d.addLayer({ id: "aoi-line", type: "line", source: "aoi", paint: { "line-color": "#fff", "line-width": 2.5 } });
     syncAoi3d();
+    map3d.on("idle", () => tilesSettled("3d"));
   });
 
   // restore a shared link, else show the whole mapped area
@@ -560,7 +575,7 @@ $("about-close").onclick = () => $("about").close();
   else if (!$("jump").value) fitMapped(); // don't undo a place picked while the page was loading
   if (h.aoi) setAoi(h.aoi, { fit: !h.center });
   writeHash();
-  setTimeout(() => { if (!state.firstTile) $("map-status-msg").textContent = "Still loading land cover… (slow connection)"; }, 8000);
+  setTimeout(() => { if (!state.firstTile && !$("map-status").classList.contains("error")) $("map-status-msg").textContent = "Still loading land cover… (slow connection)"; }, 8000);
 })().catch((err) => mapError(`The map data didn't load (${err.message}). Check your connection and reload the page.`));
 
 function flyToNow([lat, lng, z2d]) {
