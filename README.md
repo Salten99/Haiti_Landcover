@@ -6,6 +6,8 @@ The map opens as a 3D terrain view (MapLibre, AWS Terrain Tiles elevation, drag 
 
 Everything runs in the browser. The map is a single Cloud-Optimized GeoTIFF in `data/` that the browser reads in pieces over HTTP range requests, so there is no server to run. Areas you draw never leave your browser.
 
+https://salten99.github.io/Haiti_Landcover/
+
 ## Status
 
 **Preliminary.** The model is trained and applied in the same Central Plateau area, with about 75% accuracy in spatial cross-validation. An independent accuracy assessment is in progress. A country-wide version is planned once the imagery-source question is settled (see `national_map.py`).
