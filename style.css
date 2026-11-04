@@ -201,6 +201,7 @@ th:not(:first-child), .num { text-align: right; font-variant-numeric: tabular-nu
   background: rgb(22 32 26 / 0.72); color: #fff; font-size: var(--fs-small);
 }
 .map-wrap[data-mode="2d"] .map-hint { display: none; }
+.map-logo { position: absolute; left: 10px; bottom: 36px; z-index: 1000; line-height: 0; }
 
 .maplibregl-popup-content, .leaflet-popup-content-wrapper { color: var(--ink); font-family: inherit; }
 .popup-class { font-size: 0.9375rem; line-height: 1.4; }

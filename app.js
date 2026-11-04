@@ -8,8 +8,9 @@ const MAX_PIXELS = 4e6; // larger areas are read from a coarser overview to stay
 const NODATA = 255;
 const LOW_CONF = 50;
 const OPEN_LAND = 3;
-const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-const ESRI_ATTR = "Imagery © Esri, Maxar, Earthstar Geographics";
+// public by design on a static site: restrict the key to this site's origins in MapTiler
+const IMAGERY = "https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=T1SZ7GfKYDi8J2dFzGG9";
+const IMAGERY_ATTR = '<a href="https://www.maptiler.com/copyright/" target="_blank" rel="noopener">© MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>';
 const DEM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const PHONE = matchMedia("(max-width: 760px)");
@@ -105,7 +106,7 @@ async function inspect(lat, lng) {
 
 // ---------------------------------------------------------------- 2D map (Leaflet)
 const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([18.95, -71.94], 10);
-L.tileLayer(ESRI, { maxZoom: 18, attribution: ESRI_ATTR }).addTo(map);
+L.tileLayer(IMAGERY, { tileSize: 512, zoomOffset: -1, maxZoom: 18, attribution: IMAGERY_ATTR }).addTo(map);
 const drawn = new L.FeatureGroup().addTo(map);
 const AOI_HALO = { color: "#16201a", weight: 6, opacity: 0.55, fill: false };
 const AOI_LINE = { color: "#ffffff", weight: 2.5, fillColor: "#ffffff", fillOpacity: 0.06 };
@@ -150,11 +151,11 @@ const map3d = !HAS_WEBGL ? NO_3D : new maplibregl.Map({
   style: {
     version: 8,
     sources: {
-      esri: { type: "raster", tiles: [ESRI], tileSize: 256, maxzoom: 18, attribution: ESRI_ATTR },
+      imagery: { type: "raster", tiles: [IMAGERY], tileSize: 512, maxzoom: 18, attribution: IMAGERY_ATTR },
       dem: { type: "raster-dem", tiles: [DEM], tileSize: 256, maxzoom: 15, encoding: "terrarium",
              attribution: "Terrain: Mapzen / AWS Terrain Tiles" },
     },
-    layers: [{ id: "esri", type: "raster", source: "esri" }],
+    layers: [{ id: "imagery", type: "raster", source: "imagery" }],
   },
   center: [-71.94, 18.95], zoom: 9.6, pitch: 35, bearing: -15, maxPitch: 75,
 });
